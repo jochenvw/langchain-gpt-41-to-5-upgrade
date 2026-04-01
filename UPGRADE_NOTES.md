@@ -18,6 +18,31 @@
 - This is an **Azure-side issue** — the On Your Data service has not been updated to use `max_completion_tokens` for GPT 5.
 - **No client-side workaround exists** for this specific issue.
 
+#### BYOD request flow and root cause
+
+```
+Client App → Azure OpenAI API → [On Your Data pipeline] → Azure AI Search
+                                         ↓
+                                 Retrieves search results
+                                         ↓
+                                 Internally calls GPT model
+                                 with max_tokens parameter
+                                         ↓
+                                 GPT 5 rejects max_tokens ❌
+                                 (requires max_completion_tokens)
+```
+
+The client app does NOT send `max_tokens` — the error originates inside Azure's
+On Your Data orchestration layer. The error message confirms this:
+
+> `"An error occurred when calling Azure OpenAI: ... 'max_tokens' is not
+> supported with this model. Use 'max_completion_tokens' instead."`
+
+The phrase "when calling Azure OpenAI" indicates Azure's own pipeline hit the
+error when making its internal call to the GPT 5 model with search-grounded
+context. Microsoft must update the On Your Data service to use
+`max_completion_tokens` for GPT 5 family models.
+
 ## Reproduction Steps
 
 1. Start with baseline app on GPT 4.1: `python app.py --mode byod` → works ✅
