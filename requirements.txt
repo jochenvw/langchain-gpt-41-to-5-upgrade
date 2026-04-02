@@ -3,3 +3,4 @@ langchain-openai>=0.3.0
 openai>=1.60.0
 python-dotenv>=1.0.0
 azure-identity>=1.17.0
+azure-ai-evaluation>=1.0.0

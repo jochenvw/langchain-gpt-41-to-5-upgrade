@@ -1,0 +1,63 @@
+name: Run LLM Evaluations
+
+on:
+  pull_request:
+    paths:
+      - "app.py"
+      - "config.py"
+      - "evals/**"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which eval suite to run"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - chat
+          - byod
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: eval-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+  AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+  AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+  AZURE_OPENAI_API_VERSION: "2024-06-01"
+  AZURE_OPENAI_AUTH_TYPE: "key"
+  AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
+  AZURE_SEARCH_INDEX: ${{ secrets.AZURE_SEARCH_INDEX }}
+  AZURE_SEARCH_API_KEY: ${{ secrets.AZURE_SEARCH_API_KEY }}
+  AZURE_SEARCH_AUTH_TYPE: "key"
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run evaluations
+        run: |
+          SUITE="${{ github.event.inputs.suite || 'all' }}"
+          uv run python -m evals.run_all --suite "$SUITE"
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval_results_*.json
+          retention-days: 30
