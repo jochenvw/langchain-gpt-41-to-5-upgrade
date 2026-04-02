@@ -24,7 +24,7 @@ from azure.ai.evaluation import (
     evaluate,
 )
 
-from evals.eval_config import DATA_DIR, get_model_config
+from evals.eval_config import DATA_DIR, get_foundry_project, get_model_config
 
 
 def build_chat_target():
@@ -53,6 +53,7 @@ def build_chat_target():
 
 def main():
     model_config = get_model_config()
+    foundry_project = get_foundry_project()
     data_path = str(DATA_DIR / "chat_test_data.jsonl")
 
     print("=" * 60)
@@ -61,9 +62,10 @@ def main():
     print(f"Dataset : {data_path}")
     print(f"Endpoint: {model_config['azure_endpoint']}")
     print(f"Deploy  : {model_config['azure_deployment']}")
+    print(f"Foundry : {'enabled — results will appear in portal' if foundry_project else 'disabled (local only)'}")
     print()
 
-    results = evaluate(
+    evaluate_kwargs = dict(
         data=data_path,
         target=build_chat_target(),
         evaluators={
@@ -83,6 +85,10 @@ def main():
         },
         output_path="./eval_results_chat.json",
     )
+    if foundry_project:
+        evaluate_kwargs["azure_ai_project"] = foundry_project
+
+    results = evaluate(**evaluate_kwargs)
 
     print("\n--- Aggregate Scores ---")
     metrics = results.get("metrics", results)

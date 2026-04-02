@@ -30,7 +30,7 @@ from azure.ai.evaluation import (
     evaluate,
 )
 
-from evals.eval_config import DATA_DIR, get_model_config
+from evals.eval_config import DATA_DIR, get_foundry_project, get_model_config
 
 
 def build_byod_target():
@@ -70,6 +70,7 @@ def build_byod_target():
 
 def main():
     model_config = get_model_config()
+    foundry_project = get_foundry_project()
     data_path = str(DATA_DIR / "byod_test_data.jsonl")
 
     print("=" * 60)
@@ -78,9 +79,10 @@ def main():
     print(f"Dataset : {data_path}")
     print(f"Endpoint: {model_config['azure_endpoint']}")
     print(f"Deploy  : {model_config['azure_deployment']}")
+    print(f"Foundry : {'enabled — results will appear in portal' if foundry_project else 'disabled (local only)'}")
     print()
 
-    results = evaluate(
+    evaluate_kwargs = dict(
         data=data_path,
         target=build_byod_target(),
         evaluators={
@@ -101,6 +103,10 @@ def main():
         },
         output_path="./eval_results_byod.json",
     )
+    if foundry_project:
+        evaluate_kwargs["azure_ai_project"] = foundry_project
+
+    results = evaluate(**evaluate_kwargs)
 
     print("\n--- Aggregate Scores ---")
     metrics = results.get("metrics", results)
@@ -110,11 +116,17 @@ def main():
     rows = results.get("rows", [])
     if rows:
         print(f"\n--- Per-Query Scores ({len(rows)} queries) ---")
+        header = f"  {'#':<4} {'Query':<55} {'Ground':>6} {'Rel':>5} {'Coher':>5} {'Flu':>5} {'Retr':>5}"
+        print(header)
+        print(f"  {'-' * len(header.strip())}")
         for i, row in enumerate(rows):
-            q = row.get("inputs.query", row.get("query", f"Q{i+1}"))
-            g = row.get("outputs.groundedness", "n/a")
-            r = row.get("outputs.relevance", "n/a")
-            print(f"  [{i+1}] {q[:60]:<60}  ground={g}  rel={r}")
+            q = row.get("inputs.query", f"Q{i+1}")[:55]
+            g = row.get("outputs.groundedness.groundedness", "n/a")
+            r = row.get("outputs.relevance.relevance", "n/a")
+            c = row.get("outputs.coherence.coherence", "n/a")
+            f = row.get("outputs.fluency.fluency", "n/a")
+            t = row.get("outputs.retrieval.retrieval", "n/a")
+            print(f"  [{i+1:<2}] {q:<55} {g:>6} {r:>5} {c:>5} {f:>5} {t:>5}")
 
     print(f"\nDetailed results saved to: eval_results_byod.json")
 

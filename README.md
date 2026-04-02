@@ -19,7 +19,7 @@ A customer reported that BYOD (On Your Data) breaks when the model is upgraded f
 
 | Tool | Version | Install |
 |------|---------|---------|
-| **Python** | ≥ 3.11 | [python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.12` |
+| **Python** | ≥ 3.12 | [python.org](https://www.python.org/downloads/) or `winget install Python.Python.3.12` |
 | **uv** | ≥ 0.4 | `pip install uv` or `winget install astral-sh.uv` — see [docs.astral.sh](https://docs.astral.sh/uv/getting-started/installation/) |
 
 You also need access to:
@@ -55,6 +55,9 @@ cp .env.example .env
 | `AZURE_SEARCH_INDEX` | Search index name | `safety-source-index` |
 | `AZURE_SEARCH_AUTH_TYPE` | `token`, `key`, or `rbac` | `token` |
 | `AZURE_SEARCH_API_KEY` | Search API key (only needed if auth_type=key) | |
+| `FOUNDRY_SUBSCRIPTION_ID` | *(optional)* Azure subscription for Foundry portal | |
+| `FOUNDRY_RESOURCE_GROUP` | *(optional)* Resource group for Foundry project | |
+| `FOUNDRY_PROJECT_NAME` | *(optional)* Foundry project name for eval dashboards | |
 
 ## Running the app
 

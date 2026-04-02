@@ -3,6 +3,21 @@
 > **Audience**: An LLM agent (or developer) executing this migration step-by-step.
 > Each step is self-contained with explicit inputs, outputs, and verification criteria.
 
+## Prerequisites
+
+| Requirement | Version | Why |
+|-------------|---------|-----|
+| **Python** | **≥ 3.12** | The `azure-ai-evaluation` SDK has a validator bug (`isinstance(v, typing.Any)` raises `TypeError`) on Python 3.11 and below. The `credential` field in `AzureOpenAIModelConfiguration` triggers this. **3.12+ is required.** |
+| **uv** | ≥ 0.4 | Package manager — all commands use `uv sync` / `uv run`. Install: `pip install uv` or [docs.astral.sh](https://docs.astral.sh/uv/getting-started/installation/) |
+| **Azure OpenAI** | — | A resource with GPT 4.1 deployment (for baseline) and GPT 5 (for migration target) |
+| **Azure AI Search** | — | A search service with a populated index |
+| **Auth** | Entra ID or API key | Entra ID (`DefaultAzureCredential`) is the default; API key also supported |
+
+> ⚠️ **Known SDK issue**: `azure-ai-evaluation` cannot pass `credential` (DefaultAzureCredential)
+> directly to evaluators due to a `typing.Any` validation bug. The workaround in
+> `evals/eval_config.py` acquires a bearer token and passes it as `api_key` instead.
+> This works but tokens expire after ~1 hour. For long eval runs, re-run the script.
+
 ## Background
 
 Azure OpenAI On Your Data (BYOD) is **deprecated** and does not support GPT 5.
@@ -107,34 +122,48 @@ python -c "from evals.eval_config import get_model_config; print('OK')"
 **Goal:** Run the BYOD pipeline against the `safety-source-index` with a curated set of
 queries and capture (query, response, context, ground_truth) tuples as the baseline dataset.
 
+**Script:** `scripts/generate_byod_eval_data.py` — automates the entire flow:
+1. Connects directly to Azure AI Search and samples documents
+2. Uses GPT to synthesise realistic eval queries from document content
+3. Runs each query through the BYOD pipeline to capture response + context
+4. Writes a complete JSONL dataset to `evals/data/byod_test_data.jsonl`
+
 **Instructions for an LLM agent:**
 
-1. **Switch .env to GPT 4.1** — set `AZURE_OPENAI_DEPLOYMENT=gpt-4.1` so BYOD works.
+1. **Ensure `.env` has `AZURE_OPENAI_DEPLOYMENT=gpt-4.1`** so BYOD works.
 
-2. **Curate domain-specific queries** — expand `evals/data/byod_test_data.jsonl` to 20–30
-   queries that represent real user questions for the safety-source-index. Cover:
-   - Common questions (high-traffic)
-   - Edge cases (ambiguous queries, queries with no good answer in the index)
-   - Multi-topic queries (require info from multiple documents)
+2. **Dry run** to preview what documents are available:
+   ```bash
+   uv run python scripts/generate_byod_eval_data.py --dry-run --sample-size 15
+   ```
 
-3. **Build a data generation script** (`evals/generate_baseline.py`) that:
-   - Reads queries from `byod_test_data.jsonl`
-   - Calls the BYOD pipeline via `build_llm()` + `get_byod_extra_body()` from `app.py`
-   - Captures the response text and full context/citations from `response.response_metadata`
-   - Has a human review the responses and mark them as correct → writes `ground_truth`
-   - Outputs a complete `evals/data/byod_baseline.jsonl` with all fields populated
+3. **Generate the dataset** (queries + BYOD responses + context + ground truth):
+   ```bash
+   uv run python scripts/generate_byod_eval_data.py --sample-size 15 --queries-per-doc 2
+   ```
+   This produces ~30 eval queries. Use `--skip-byod` if you only want queries without
+   running the BYOD pipeline (responses/context will be populated at eval time instead).
 
 4. **Run the BYOD eval against this baseline** to get initial scores:
    ```bash
-   python -m evals.run_all --suite byod
+   uv run python -m evals.run_all --suite byod
    ```
 
 5. **Save the baseline scores** — commit `eval_results_byod.json` or record the aggregate
    metrics (groundedness, relevance, retrieval) as the target to match after migration.
 
+**Script options:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sample-size` | 10 | Number of documents to sample from the index |
+| `--queries-per-doc` | 2 | Eval queries to generate per document |
+| `--output` | `evals/data/byod_test_data.jsonl` | Output path |
+| `--skip-byod` | off | Skip BYOD pipeline (only generate queries) |
+| `--dry-run` | off | Preview sampled docs without calling GPT |
+
 **Verification:**
-- `byod_baseline.jsonl` exists with populated query, response, context, ground_truth fields
-- `python -m evals.run_all --suite byod` completes and prints aggregate scores
+- `byod_test_data.jsonl` exists with populated query, response, context, ground_truth fields
+- `uv run python -m evals.run_all --suite byod` completes and prints aggregate scores
 - Baseline scores are recorded for comparison
 
 **Key implementation details:**
