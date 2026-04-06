@@ -185,14 +185,17 @@ Example output:
         title_hint = f" (from: {doc['title']})" if doc["title"] else ""
 
         try:
-            response = client.chat.completions.create(
+            create_kwargs = dict(
                 model=settings.deployment,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Document{title_hint}:\n\n{excerpt}"},
                 ],
-                temperature=0.7,
             )
+            # GPT-5 only supports the default temperature (1)
+            if not settings.deployment.startswith("gpt-5"):
+                create_kwargs["temperature"] = 0.7
+            response = client.chat.completions.create(**create_kwargs)
             raw = response.choices[0].message.content.strip()
             # Strip markdown fencing if present
             if raw.startswith("```"):
@@ -223,7 +226,7 @@ Example output:
 
 
 # ---------------------------------------------------------------------------
-# BYOD pipeline — get responses and context for each query
+# BYOD / Foundry pipelines — get responses and context for each query
 # ---------------------------------------------------------------------------
 
 def run_byod_pipeline(eval_items: list[dict]) -> list[dict]:
@@ -244,12 +247,11 @@ def run_byod_pipeline(eval_items: list[dict]) -> list[dict]:
 
             item["response"] = result.content
 
-            # Extract context from citations
+            # Extract context/citations preserved by AzureChatOpenAIWithContext
             context = ""
-            if hasattr(result, "response_metadata") and result.response_metadata:
-                meta = result.response_metadata
-                ctx_block = meta.get("context", {})
-                citations = ctx_block.get("citations") or ctx_block.get("documents") or []
+            ctx_block = (result.additional_kwargs or {}).get("context", {})
+            citations = ctx_block.get("citations") or ctx_block.get("documents") or []
+            if citations:
                 context = "\n\n".join(
                     c.get("content", "") for c in citations if c.get("content")
                 )
@@ -267,6 +269,45 @@ def run_byod_pipeline(eval_items: list[dict]) -> list[dict]:
 
     successful = sum(1 for it in eval_items if it["response"])
     print(f"\nBYOD pipeline complete: {successful}/{len(eval_items)} succeeded.")
+    return eval_items
+
+
+def run_foundry_pipeline(eval_items: list[dict]) -> list[dict]:
+    """Run each query through the Foundry IQ Agent pipeline."""
+    from app import build_foundry_client, build_foundry_agent, query_foundry_agent
+
+    print(f"\nRunning {len(eval_items)} queries through Foundry IQ Agent pipeline...")
+
+    client = build_foundry_client()
+    agent = build_foundry_agent(client)
+    print(f"  Agent created: {agent.id}")
+
+    for i, item in enumerate(eval_items):
+        try:
+            result = query_foundry_agent(client, agent, item["query"])
+
+            item["response"] = result.get("response", "")
+            item["context"] = result.get("context", "")
+
+            status = f"{len(item['response'])} chars"
+            print(f"  [{i+1}/{len(eval_items)}] {item['query'][:55]:<55} → {status}")
+
+        except Exception as exc:
+            print(f"  [{i+1}/{len(eval_items)}] FAILED: {exc}")
+            item["response"] = ""
+            item["context"] = ""
+
+        time.sleep(0.3)
+
+    # Clean up the agent
+    try:
+        client.agents.delete_agent(agent.id)
+        print(f"  Agent {agent.id} cleaned up.")
+    except Exception:
+        pass
+
+    successful = sum(1 for it in eval_items if it["response"])
+    print(f"\nFoundry pipeline complete: {successful}/{len(eval_items)} succeeded.")
     return eval_items
 
 
@@ -362,6 +403,10 @@ CLI flags override .env values, so you can point at any search environment:
         help="Skip the BYOD pipeline step (only generate queries, no responses)",
     )
     gen_group.add_argument(
+        "--use-foundry", action="store_true",
+        help="Use Foundry IQ Agent pipeline instead of legacy BYOD",
+    )
+    gen_group.add_argument(
         "--dry-run", action="store_true",
         help="Sample docs and show what would be generated, but don't call GPT",
     )
@@ -407,16 +452,22 @@ CLI flags override .env values, so you can point at any search environment:
         print("ERROR: No queries generated. Check GPT connectivity.")
         sys.exit(1)
 
-    # Step 3: Run through BYOD pipeline (optional)
+    # Step 3: Run through pipeline (optional)
     if not args.skip_byod:
-        eval_items = run_byod_pipeline(eval_items)
+        if args.use_foundry:
+            eval_items = run_foundry_pipeline(eval_items)
+        else:
+            eval_items = run_byod_pipeline(eval_items)
 
     # Step 4: Write output
     write_jsonl(eval_items, output)
 
     print(f"\n{'=' * 60}")
     print(f"Done! {len(eval_items)} eval queries ready.")
-    print(f"Run evals with: uv run python -m evals.run_all --suite byod")
+    if args.use_foundry:
+        print(f"Run evals with: uv run python -m evals.eval_byod --use-foundry")
+    else:
+        print(f"Run evals with: uv run python -m evals.run_all --suite byod")
 
 
 if __name__ == "__main__":

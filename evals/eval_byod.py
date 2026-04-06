@@ -7,16 +7,19 @@ Runs safety-domain queries through the BYOD pipeline and evaluates:
   - Fluency       (is the response well-written?)
   - Retrieval     (did the retriever return useful documents?)
 
-This establishes a quality baseline so you can measure impact when
-migrating models (e.g. GPT-4.1 → GPT-5) or moving to Foundry Agent Service.
+Supports two backends:
+  - Legacy BYOD (On Your Data) — default, uses GPT-4.1
+  - Foundry IQ Agent Service  — use --use-foundry, uses GPT-5
 
 Usage:
-    python -m evals.eval_byod            # from project root
-    python evals/eval_byod.py            # direct
+    python -m evals.eval_byod                    # legacy BYOD
+    python -m evals.eval_byod --use-foundry      # Foundry IQ + GPT-5
 """
 
+import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,43 +51,94 @@ def build_byod_target():
 
     def target_fn(query: str, **kwargs) -> dict:
         messages = [system, HumanMessage(content=query)]
-        result = llm.invoke(messages, extra_body=extra_body)
 
-        # Extract context/citations from response metadata
+        start = time.perf_counter()
+        result = llm.invoke(messages, extra_body=extra_body)
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        # Extract context/citations preserved by AzureChatOpenAIWithContext
         context = ""
-        if hasattr(result, "response_metadata") and result.response_metadata:
-            meta = result.response_metadata
-            ctx_block = meta.get("context", {})
-            citations = ctx_block.get("citations") or ctx_block.get("documents") or []
+        ctx_block = (result.additional_kwargs or {}).get("context", {})
+        citations = ctx_block.get("citations") or ctx_block.get("documents") or []
+        if citations:
             context = "\n\n".join(
                 c.get("content", "") for c in citations if c.get("content")
             )
 
+        # Extract token usage from LangChain's usage_metadata
+        usage = getattr(result, "usage_metadata", None) or {}
+        prompt_tokens = usage.get("input_tokens", 0)
+        completion_tokens = usage.get("output_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+
         return {
             "response": result.content,
             "context": context,
+            "latency_ms": round(latency_ms, 1),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
         }
 
     return target_fn
 
 
-def main():
+def build_foundry_target():
+    """Return a callable that invokes the Foundry IQ Agent Service.
+
+    Uses GPT-5 with Azure AI Search grounding via the Foundry Agent SDK.
+    """
+    from app import build_foundry_client, build_foundry_agent, query_foundry_agent
+
+    client = build_foundry_client()
+    agent = build_foundry_agent(client)
+    print(f"  Foundry agent created: {agent.id}")
+
+    def target_fn(query: str, **kwargs) -> dict:
+        start = time.perf_counter()
+        result = query_foundry_agent(client, agent, query)
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        return {
+            "response": result.get("response", ""),
+            "context": result.get("context", ""),
+            "latency_ms": round(latency_ms, 1),
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    # Attach cleanup so caller can delete agent when done
+    target_fn._cleanup = lambda: client.agents.delete_agent(agent.id)
+    target_fn._agent_id = agent.id
+
+    return target_fn
+
+
+def main(use_foundry: bool = False):
     model_config = get_model_config()
     foundry_project = get_foundry_project()
     data_path = str(DATA_DIR / "byod_test_data.jsonl")
 
+    backend = "Foundry IQ Agent Service (GPT-5)" if use_foundry else "Legacy BYOD (On Your Data)"
+
     print("=" * 60)
-    print("BYOD / RAG Evaluation — Azure AI Evaluation SDK")
+    print(f"RAG Evaluation — {backend}")
     print("=" * 60)
     print(f"Dataset : {data_path}")
-    print(f"Endpoint: {model_config['azure_endpoint']}")
-    print(f"Deploy  : {model_config['azure_deployment']}")
+    if not use_foundry:
+        print(f"Endpoint: {model_config['azure_endpoint']}")
+        print(f"Deploy  : {model_config['azure_deployment']}")
     print(f"Foundry : {'enabled — results will appear in portal' if foundry_project else 'disabled (local only)'}")
     print()
 
+    target = build_foundry_target() if use_foundry else build_byod_target()
+
+    output_path = "./eval_results_byod_foundry.json" if use_foundry else "./eval_results_byod.json"
+
     evaluate_kwargs = dict(
         data=data_path,
-        target=build_byod_target(),
+        target=target,
         evaluators={
             "groundedness": GroundednessEvaluator(model_config),
             "relevance": RelevanceEvaluator(model_config),
@@ -101,12 +155,21 @@ def main():
                 }
             }
         },
-        output_path="./eval_results_byod.json",
+        output_path=output_path,
     )
     if foundry_project:
         evaluate_kwargs["azure_ai_project"] = foundry_project
 
-    results = evaluate(**evaluate_kwargs)
+    try:
+        results = evaluate(**evaluate_kwargs)
+    finally:
+        # Clean up Foundry agent if used
+        if use_foundry and hasattr(target, "_cleanup"):
+            try:
+                target._cleanup()
+                print(f"  Foundry agent {target._agent_id} cleaned up.")
+            except Exception:
+                pass
 
     print("\n--- Aggregate Scores ---")
     metrics = results.get("metrics", results)
@@ -115,21 +178,38 @@ def main():
     # Print per-query breakdown if available
     rows = results.get("rows", [])
     if rows:
+        # Latency & token summary
+        latencies = [r.get("outputs.latency_ms", 0) for r in rows if r.get("outputs.latency_ms")]
+        total_toks = [r.get("outputs.total_tokens", 0) for r in rows if r.get("outputs.total_tokens")]
+        if latencies:
+            print(f"\n--- Latency & Token Usage ({len(rows)} queries) ---")
+            print(f"  Avg latency   : {sum(latencies)/len(latencies):.0f} ms")
+            print(f"  Min latency   : {min(latencies):.0f} ms")
+            print(f"  Max latency   : {max(latencies):.0f} ms")
+        if total_toks:
+            print(f"  Avg tokens    : {sum(total_toks)/len(total_toks):.0f}")
+            print(f"  Total tokens  : {sum(total_toks)}")
+
         print(f"\n--- Per-Query Scores ({len(rows)} queries) ---")
-        header = f"  {'#':<4} {'Query':<55} {'Ground':>6} {'Rel':>5} {'Coher':>5} {'Flu':>5} {'Retr':>5}"
+        header = f"  {'#':<4} {'Query':<45} {'Ground':>6} {'Rel':>5} {'Coher':>5} {'Flu':>5} {'Retr':>5} {'ms':>7} {'Tokens':>6}"
         print(header)
         print(f"  {'-' * len(header.strip())}")
         for i, row in enumerate(rows):
-            q = row.get("inputs.query", f"Q{i+1}")[:55]
+            q = row.get("inputs.query", f"Q{i+1}")[:45]
             g = row.get("outputs.groundedness.groundedness", "n/a")
             r = row.get("outputs.relevance.relevance", "n/a")
             c = row.get("outputs.coherence.coherence", "n/a")
             f = row.get("outputs.fluency.fluency", "n/a")
             t = row.get("outputs.retrieval.retrieval", "n/a")
-            print(f"  [{i+1:<2}] {q:<55} {g:>6} {r:>5} {c:>5} {f:>5} {t:>5}")
+            ms = row.get("outputs.latency_ms", "n/a")
+            tok = row.get("outputs.total_tokens", "n/a")
+            print(f"  [{i+1:<2}] {q:<45} {g:>6} {r:>5} {c:>5} {f:>5} {t:>5} {ms:>7} {tok:>6}")
 
-    print(f"\nDetailed results saved to: eval_results_byod.json")
+    print(f"\nDetailed results saved to: {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--use-foundry", action="store_true", help="Use Foundry IQ Agent Service instead of BYOD")
+    args = parser.parse_args()
+    main(use_foundry=args.use_foundry)

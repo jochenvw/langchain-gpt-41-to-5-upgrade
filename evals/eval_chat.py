@@ -11,6 +11,7 @@ Usage:
 
 import json
 import sys
+import time
 from pathlib import Path
 
 # Ensure project root is on sys.path so we can import app modules
@@ -39,14 +40,26 @@ def build_chat_target():
     llm = build_llm()
     system = SystemMessage(content="You are a helpful assistant.")
 
-    def _target(query: str) -> str:
-        messages = [system, HumanMessage(content=query)]
-        result = llm.invoke(messages)
-        return result.content
-
-    # Wrap to match evaluate() target signature: dict in → dict out
     def target_fn(query: str, **kwargs) -> dict:
-        return {"response": _target(query)}
+        messages = [system, HumanMessage(content=query)]
+
+        start = time.perf_counter()
+        result = llm.invoke(messages)
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        # Extract token usage from LangChain's usage_metadata
+        usage = getattr(result, "usage_metadata", None) or {}
+        prompt_tokens = usage.get("input_tokens", 0)
+        completion_tokens = usage.get("output_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+
+        return {
+            "response": result.content,
+            "latency_ms": round(latency_ms, 1),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
 
     return target_fn
 
@@ -93,6 +106,21 @@ def main():
     print("\n--- Aggregate Scores ---")
     metrics = results.get("metrics", results)
     print(json.dumps(metrics, indent=2))
+
+    # Print latency and token usage summary
+    rows = results.get("rows", [])
+    if rows:
+        latencies = [r.get("outputs.latency_ms", 0) for r in rows if r.get("outputs.latency_ms")]
+        total_toks = [r.get("outputs.total_tokens", 0) for r in rows if r.get("outputs.total_tokens")]
+        if latencies:
+            print(f"\n--- Latency & Token Usage ({len(rows)} queries) ---")
+            print(f"  Avg latency   : {sum(latencies)/len(latencies):.0f} ms")
+            print(f"  Min latency   : {min(latencies):.0f} ms")
+            print(f"  Max latency   : {max(latencies):.0f} ms")
+        if total_toks:
+            print(f"  Avg tokens    : {sum(total_toks)/len(total_toks):.0f}")
+            print(f"  Total tokens  : {sum(total_toks)}")
+
     print(f"\nDetailed results saved to: eval_results_chat.json")
 
 

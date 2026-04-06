@@ -29,6 +29,11 @@ class AzureOpenAIConfig:
     search_api_key: str
     search_auth_type: str  # "key" or "rbac"
 
+    # Foundry IQ Agent Service settings
+    foundry_endpoint: str
+    foundry_model_deployment: str
+    foundry_search_connection_id: str
+
     @property
     def azure_endpoint_base(self) -> str:
         """Return the base endpoint WITHOUT the /openai suffix.
@@ -81,6 +86,9 @@ def load_config() -> AzureOpenAIConfig:
         search_index=os.environ.get("AZURE_SEARCH_INDEX", ""),
         search_api_key=os.environ.get("AZURE_SEARCH_API_KEY", ""),
         search_auth_type=os.environ.get("AZURE_SEARCH_AUTH_TYPE", "rbac").lower(),
+        foundry_endpoint=os.environ.get("FOUNDRY_ENDPOINT", ""),
+        foundry_model_deployment=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "gpt-5"),
+        foundry_search_connection_id=os.environ.get("FOUNDRY_SEARCH_CONNECTION_ID", ""),
     )
 
 

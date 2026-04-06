@@ -26,6 +26,11 @@ def main():
         default="all",
         help="Which suite to run (default: all)",
     )
+    parser.add_argument(
+        "--use-foundry",
+        action="store_true",
+        help="Use Foundry IQ Agent Service for BYOD evaluation",
+    )
     args = parser.parse_args()
 
     suites = list(SUITES.keys()) if args.suite == "all" else [args.suite]
@@ -37,7 +42,10 @@ def main():
         print(f"{'#' * 60}\n")
         try:
             mod = importlib.import_module(SUITES[name])
-            mod.main()
+            if name == "byod":
+                mod.main(use_foundry=args.use_foundry)
+            else:
+                mod.main()
         except Exception as exc:
             print(f"\n[FAILED] {name}: {exc}")
             traceback.print_exc()
