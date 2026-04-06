@@ -1,9 +1,9 @@
-"""LangChain baseline app with GPT-4.1 via Azure OpenAI APIM Gateway.
+"""LangChain app with GPT-5 via Azure OpenAI.
 
 Supports four modes:
   --mode chat     Simple chat (no BYOD) — baseline connectivity test
-  --mode byod     Chat with Azure AI Search "On Your Data" (BYOD)
-  --mode foundry  Chat via Foundry IQ Agent Service with Azure AI Search
+  --mode byod     Chat with Azure AI Search "On Your Data" (BYOD, legacy GPT-4.1 only)
+  --mode foundry  GPT-5 RAG via Responses API + direct Azure AI Search
   --mode direct   Direct OpenAI SDK call — bypasses LangChain entirely
 """
 
@@ -212,147 +212,128 @@ def run_chat(mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Foundry IQ Agent Service with Azure AI Search (replaces BYOD)
+# Foundry: GPT-5 RAG via Responses API + direct Azure AI Search
 # ---------------------------------------------------------------------------
 
 
-def build_agents_client():
-    """Build an AgentsClient for the Azure AI Foundry Agent Service.
+def search_documents(query: str, top_k: int = 5) -> list[dict]:
+    """Query Azure AI Search directly and return top-k document snippets.
 
-    Uses the FOUNDRY_ENDPOINT from config and Entra ID authentication.
+    Uses the azure-search-documents SDK with the same auth/index config as
+    the legacy BYOD pipeline, but without the deprecated On Your Data layer.
     """
-    from azure.ai.agents import AgentsClient
     from azure.identity import DefaultAzureCredential
+    from azure.search.documents import SearchClient
 
-    return AgentsClient(
-        endpoint=settings.foundry_endpoint,
-        credential=DefaultAzureCredential(),
-    )
+    search_auth_type = settings.search_auth_type
 
+    if search_auth_type == "key":
+        from azure.core.credentials import AzureKeyCredential
+        credential = AzureKeyCredential(settings.search_api_key)
+    else:
+        credential = DefaultAzureCredential()
 
-def build_foundry_agent(client):
-    """Create a GPT-5 agent with Azure AI Search grounding via Foundry IQ.
-
-    The AzureAISearchTool connects the agent to the configured search index,
-    so grounding is handled natively by the service — no manual search loop.
-    Returns the agent object. Caller should delete when done.
-    """
-    from azure.ai.agents.models import AzureAISearchTool, AzureAISearchQueryType
-
-    ai_search = AzureAISearchTool(
-        index_connection_id=settings.foundry_search_connection_id,
+    client = SearchClient(
+        endpoint=settings.search_endpoint,
         index_name=settings.search_index,
-        query_type=AzureAISearchQueryType.SIMPLE,
-        top_k=5,
+        credential=credential,
     )
 
-    agent = client.create_agent(
-        model=settings.foundry_model_deployment,
-        name="safety-assistant",
-        instructions=(
-            "You are a helpful safety compliance assistant. "
-            "Use the provided search tool to look up information "
-            "before answering. Cite the source documents in your response."
-        ),
-        tools=ai_search.definitions,
-        tool_resources=ai_search.resources,
-    )
-    return agent
+    results = client.search(query, top=top_k)
+    docs = []
+    for r in results:
+        content = r.get("snippet", r.get("content", ""))
+        source = r.get("blob_url", r.get("title", "unknown"))
+        if content:
+            docs.append({"content": content, "source": source})
+    return docs
 
 
-def query_foundry_agent(client, agent, query: str) -> dict:
-    """Send a query to the Foundry IQ agent and return the grounded response.
+def build_responses_client():
+    """Build an OpenAI client configured for the Azure Responses API."""
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-    The Azure AI Search grounding is handled server-side by Foundry IQ.
-    Citations are extracted from URL annotations in the response.
+    base_url = settings.azure_endpoint_base.rstrip("/")
+    if not base_url.endswith("/openai/v1"):
+        base_url += "/openai/v1/"
+    else:
+        base_url += "/"
+
+    if settings.auth_type == "entra":
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            "https://cognitiveservices.azure.com/.default",
+        )
+        api_key = token_provider()
+    else:
+        api_key = settings.api_key
+
+    from openai import OpenAI
+    return OpenAI(base_url=base_url, api_key=api_key)
+
+
+def query_foundry_rag(query: str, top_k: int = 5) -> dict:
+    """Run a GPT-5 RAG query: search Azure AI Search, then call GPT-5.
+
+    This replaces the deprecated On Your Data (BYOD) pipeline with a direct
+    search → context injection → GPT-5 Responses API flow.
+    Returns a dict with 'response', 'context', and 'citations'.
     """
-    from azure.ai.agents.models import ListSortOrder, MessageRole
+    # Step 1: Retrieve relevant documents
+    docs = search_documents(query, top_k=top_k)
 
-    thread = client.threads.create()
-    client.messages.create(thread_id=thread.id, role="user", content=query)
-
-    run = client.runs.create_and_process(
-        thread_id=thread.id, agent_id=agent.id
-    )
-
-    if run.status == "failed":
-        error_msg = ""
-        if run.last_error:
-            error_msg = getattr(run.last_error, "message", str(run.last_error))
-        return {"response": "", "context": "", "citations": [], "error": error_msg}
-
-    # Extract response text and citation annotations
-    response_text = ""
+    context_parts = []
     citations = []
-    messages = client.messages.list(
-        thread_id=thread.id, order=ListSortOrder.DESCENDING
+    for i, doc in enumerate(docs, 1):
+        context_parts.append(f"[{i}] {doc['content']}")
+        citations.append({"title": f"Source {i}", "url": doc["source"]})
+    context = "\n\n".join(context_parts)
+
+    # Step 2: Call GPT-5 via Responses API with context
+    client = build_responses_client()
+    system_prompt = (
+        "You are a helpful safety compliance assistant. "
+        "Answer the user's question based on the following retrieved documents. "
+        "Cite the source numbers [1], [2], etc. in your response.\n\n"
+        f"--- Retrieved Documents ---\n{context}\n--- End Documents ---"
     )
-    for msg in messages:
-        if msg.role != MessageRole.AGENT:
-            continue
 
-        # Replace citation placeholders with readable references
-        placeholder_map = {}
-        if msg.url_citation_annotations:
-            for ann in msg.url_citation_annotations:
-                title = ann.url_citation.title if ann.url_citation else ""
-                url = ann.url_citation.url if ann.url_citation else ""
-                placeholder_map[ann.text] = f" [{title}]({url})" if title else ""
-                citations.append({"title": title, "url": url})
-
-        for text_block in msg.text_messages:
-            text = text_block.text.value
-            for placeholder, replacement in placeholder_map.items():
-                text = text.replace(placeholder, replacement)
-            response_text = text
-        break  # Only need the latest agent message
-
-    # Clean up thread
-    try:
-        client.threads.delete(thread.id)
-    except Exception:
-        pass
-
-    # Build context string from citations for eval compatibility
-    context = "\n".join(
-        f"[{c['title']}]({c['url']})" for c in citations if c.get("title")
+    response = client.responses.create(
+        model=settings.foundry_model_deployment,
+        instructions=system_prompt,
+        input=query,
     )
 
     return {
-        "response": response_text,
+        "response": response.output_text or "",
         "context": context,
         "citations": citations,
     }
 
 
 def run_foundry_chat() -> None:
-    """Run an interactive chat loop using GPT-5 via Foundry IQ Agent Service."""
-    endpoint = settings.foundry_endpoint or settings.azure_endpoint_base
-    print(f"\n=== Foundry IQ Agent Service — GPT-5 with Azure AI Search ===")
-    print(f"Endpoint   : {endpoint}")
+    """Run an interactive chat loop using GPT-5 RAG via Responses API."""
+    print(f"\n=== GPT-5 RAG — Responses API + Azure AI Search ===")
+    print(f"Endpoint   : {settings.azure_endpoint_base}")
     print(f"Model      : {settings.foundry_model_deployment}")
     print(f"Search idx : {settings.search_index}")
     print("Type 'quit' to exit.\n")
 
-    client = build_agents_client()
-    agent = build_foundry_agent(client)
-    print(f"Agent created: {agent.id}\n")
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
 
-    try:
-        while True:
-            try:
-                user_input = input("You: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\nGoodbye!")
-                break
+        if not user_input:
+            continue
+        if user_input.lower() in ("quit", "exit"):
+            print("Goodbye!")
+            break
 
-            if not user_input:
-                continue
-            if user_input.lower() in ("quit", "exit"):
-                print("Goodbye!")
-                break
-
-            result = query_foundry_agent(client, agent, user_input)
+        try:
+            result = query_foundry_rag(user_input)
 
             if result.get("error"):
                 print(f"\n[ERROR] {result['error']}\n")
@@ -363,16 +344,11 @@ def run_foundry_chat() -> None:
             if result.get("citations"):
                 print("--- Citations ---")
                 for i, cite in enumerate(result["citations"], 1):
-                    print(f"  [{i}] {cite.get('title', 'N/A')}")
-                    if cite.get("url"):
-                        print(f"      {cite['url']}")
+                    print(f"  [{i}] {cite.get('url', 'N/A')}")
                 print()
-    finally:
-        try:
-            client.delete_agent(agent.id)
-            print("Agent cleaned up.")
-        except Exception:
-            pass
+
+        except Exception as exc:
+            _handle_error(exc)
 
 
 # ---------------------------------------------------------------------------

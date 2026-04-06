@@ -9,11 +9,11 @@ Runs safety-domain queries through the BYOD pipeline and evaluates:
 
 Supports two backends:
   - Legacy BYOD (On Your Data) — default, uses GPT-4.1
-  - Foundry IQ Agent Service  — use --use-foundry, uses GPT-5
+  - GPT-5 RAG (Responses API + direct search) — use --use-foundry
 
 Usage:
     python -m evals.eval_byod                    # legacy BYOD
-    python -m evals.eval_byod --use-foundry      # Foundry IQ + GPT-5
+    python -m evals.eval_byod --use-foundry      # GPT-5 RAG
 """
 
 import argparse
@@ -84,20 +84,18 @@ def build_byod_target():
 
 
 def build_foundry_target():
-    """Return a callable that invokes GPT-5 with Azure AI Search grounding.
+    """Return a callable that invokes GPT-5 RAG via Responses API + direct search.
 
-    Uses the Azure AI Foundry Agent Service with native AzureAISearchTool
-    for server-side grounding via Foundry IQ.
+    Queries Azure AI Search directly, injects context, and calls GPT-5 via
+    the OpenAI Responses API. Replaces the deprecated BYOD/On Your Data pipeline.
     """
-    from app import build_agents_client, build_foundry_agent, query_foundry_agent
+    from app import query_foundry_rag
 
-    client = build_agents_client()
-    agent = build_foundry_agent(client)
-    print(f"  Foundry IQ agent created: {agent.id}")
+    print("  GPT-5 RAG target: Responses API + direct Azure AI Search")
 
     def target_fn(query: str, **kwargs) -> dict:
         start = time.perf_counter()
-        result = query_foundry_agent(client, agent, query)
+        result = query_foundry_rag(query)
         latency_ms = (time.perf_counter() - start) * 1000
 
         return {
@@ -109,12 +107,6 @@ def build_foundry_target():
             "total_tokens": 0,
         }
 
-    def _cleanup():
-        client.delete_agent(agent.id)
-
-    target_fn._cleanup = _cleanup
-    target_fn._agent_id = agent.id
-
     return target_fn
 
 
@@ -123,7 +115,7 @@ def main(use_foundry: bool = False):
     foundry_project = get_foundry_project()
     data_path = str(DATA_DIR / "byod_test_data.jsonl")
 
-    backend = "Foundry IQ Agent Service (GPT-5)" if use_foundry else "Legacy BYOD (On Your Data)"
+    backend = "GPT-5 RAG (Responses API + Azure AI Search)" if use_foundry else "Legacy BYOD (On Your Data)"
 
     print("=" * 60)
     print(f"RAG Evaluation — {backend}")
@@ -163,16 +155,7 @@ def main(use_foundry: bool = False):
     if foundry_project:
         evaluate_kwargs["azure_ai_project"] = foundry_project
 
-    try:
-        results = evaluate(**evaluate_kwargs)
-    finally:
-        # Clean up Foundry agent if used
-        if use_foundry and hasattr(target, "_cleanup"):
-            try:
-                target._cleanup()
-                print(f"  Foundry agent {target._agent_id} cleaned up.")
-            except Exception:
-                pass
+    results = evaluate(**evaluate_kwargs)
 
     print("\n--- Aggregate Scores ---")
     metrics = results.get("metrics", results)
@@ -213,6 +196,6 @@ def main(use_foundry: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use-foundry", action="store_true", help="Use Foundry IQ Agent Service instead of BYOD")
+    parser.add_argument("--use-foundry", action="store_true", help="Use GPT-5 RAG via Responses API instead of BYOD")
     args = parser.parse_args()
     main(use_foundry=args.use_foundry)

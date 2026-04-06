@@ -33,15 +33,20 @@ def get_model_config() -> dict:
     The azure-ai-evaluation SDK expects an AzureOpenAIModelConfiguration.
     For Entra ID auth we acquire a bearer token and pass it as api_key,
     because the SDK's credential validation has a known bug with typing.Any.
+
+    Uses EVAL_JUDGE_DEPLOYMENT (default: gpt-4.1) as the judge model, since
+    the azure-ai-evaluation SDK sends max_tokens which GPT-5 rejects.
     """
     auth_type = os.environ.get("AZURE_OPENAI_AUTH_TYPE", "entra").lower()
     endpoint = _require("AZURE_OPENAI_ENDPOINT").rstrip("/")
     if endpoint.endswith("/openai"):
         endpoint = endpoint[: -len("/openai")]
 
+    judge_deployment = os.environ.get("EVAL_JUDGE_DEPLOYMENT", "gpt-4.1")
+
     config = {
         "azure_endpoint": endpoint,
-        "azure_deployment": _require("AZURE_OPENAI_DEPLOYMENT"),
+        "azure_deployment": judge_deployment,
         "api_version": os.environ.get("AZURE_OPENAI_API_VERSION", "2024-06-01"),
     }
 
