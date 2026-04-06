@@ -274,11 +274,11 @@ def run_byod_pipeline(eval_items: list[dict]) -> list[dict]:
 
 def run_foundry_pipeline(eval_items: list[dict]) -> list[dict]:
     """Run each query through the Foundry IQ Agent pipeline."""
-    from app import build_foundry_client, build_foundry_agent, query_foundry_agent
+    from app import build_agents_client, build_foundry_agent, query_foundry_agent
 
     print(f"\nRunning {len(eval_items)} queries through Foundry IQ Agent pipeline...")
 
-    client = build_foundry_client()
+    client = build_agents_client()
     agent = build_foundry_agent(client)
     print(f"  Agent created: {agent.id}")
 
@@ -301,13 +301,13 @@ def run_foundry_pipeline(eval_items: list[dict]) -> list[dict]:
 
     # Clean up the agent
     try:
-        client.agents.delete_agent(agent.id)
+        client.delete_agent(agent.id)
         print(f"  Agent {agent.id} cleaned up.")
     except Exception:
         pass
 
     successful = sum(1 for it in eval_items if it["response"])
-    print(f"\nFoundry pipeline complete: {successful}/{len(eval_items)} succeeded.")
+    print(f"\nFoundry IQ pipeline complete: {successful}/{len(eval_items)} succeeded.")
     return eval_items
 
 

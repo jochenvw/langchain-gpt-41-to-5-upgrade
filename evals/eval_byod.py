@@ -84,15 +84,16 @@ def build_byod_target():
 
 
 def build_foundry_target():
-    """Return a callable that invokes the Foundry IQ Agent Service.
+    """Return a callable that invokes GPT-5 with Azure AI Search grounding.
 
-    Uses GPT-5 with Azure AI Search grounding via the Foundry Agent SDK.
+    Uses the Azure AI Foundry Agent Service with native AzureAISearchTool
+    for server-side grounding via Foundry IQ.
     """
-    from app import build_foundry_client, build_foundry_agent, query_foundry_agent
+    from app import build_agents_client, build_foundry_agent, query_foundry_agent
 
-    client = build_foundry_client()
+    client = build_agents_client()
     agent = build_foundry_agent(client)
-    print(f"  Foundry agent created: {agent.id}")
+    print(f"  Foundry IQ agent created: {agent.id}")
 
     def target_fn(query: str, **kwargs) -> dict:
         start = time.perf_counter()
@@ -108,8 +109,10 @@ def build_foundry_target():
             "total_tokens": 0,
         }
 
-    # Attach cleanup so caller can delete agent when done
-    target_fn._cleanup = lambda: client.agents.delete_agent(agent.id)
+    def _cleanup():
+        client.delete_agent(agent.id)
+
+    target_fn._cleanup = _cleanup
     target_fn._agent_id = agent.id
 
     return target_fn

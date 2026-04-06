@@ -10,7 +10,6 @@ Supports four modes:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import traceback
 from typing import Any
@@ -213,50 +212,48 @@ def run_chat(mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Foundry IQ Agent Service (replaces BYOD for GPT-5)
+# Foundry IQ Agent Service with Azure AI Search (replaces BYOD)
 # ---------------------------------------------------------------------------
 
-def build_foundry_client():
-    """Build an AIProjectClient for the Foundry IQ Agent Service."""
-    from azure.ai.projects import AIProjectClient
+
+def build_agents_client():
+    """Build an AgentsClient for the Azure AI Foundry Agent Service.
+
+    Uses the FOUNDRY_ENDPOINT from config and Entra ID authentication.
+    """
+    from azure.ai.agents import AgentsClient
     from azure.identity import DefaultAzureCredential
 
-    if not settings.foundry_endpoint:
-        print("ERROR: FOUNDRY_ENDPOINT is not set. Check your .env file.")
-        sys.exit(1)
-
-    return AIProjectClient(
+    return AgentsClient(
         endpoint=settings.foundry_endpoint,
         credential=DefaultAzureCredential(),
     )
 
 
 def build_foundry_agent(client):
-    """Create a Foundry IQ agent with Azure AI Search grounding.
+    """Create a GPT-5 agent with Azure AI Search grounding via Foundry IQ.
 
-    Returns the agent object. The caller is responsible for deleting the
-    agent when done (or reusing it across queries).
+    The AzureAISearchTool connects the agent to the configured search index,
+    so grounding is handled natively by the service — no manual search loop.
+    Returns the agent object. Caller should delete when done.
     """
     from azure.ai.agents.models import AzureAISearchTool, AzureAISearchQueryType
-    from azure.ai.projects.models import ConnectionType
-
-    # Resolve the Azure AI Search connection
-    if settings.foundry_search_connection_id:
-        conn_id = settings.foundry_search_connection_id
-    else:
-        conn_id = client.connections.get_default(ConnectionType.AZURE_AI_SEARCH).id
 
     ai_search = AzureAISearchTool(
-        index_connection_id=conn_id,
+        index_connection_id=settings.foundry_search_connection_id,
         index_name=settings.search_index,
         query_type=AzureAISearchQueryType.SIMPLE,
         top_k=5,
     )
 
-    agent = client.agents.create_agent(
+    agent = client.create_agent(
         model=settings.foundry_model_deployment,
         name="safety-assistant",
-        instructions="You are a helpful safety compliance assistant. Answer questions using the indexed documents.",
+        instructions=(
+            "You are a helpful safety compliance assistant. "
+            "Use the provided search tool to look up information "
+            "before answering. Cite the source documents in your response."
+        ),
         tools=ai_search.definitions,
         tool_resources=ai_search.resources,
     )
@@ -264,73 +261,62 @@ def build_foundry_agent(client):
 
 
 def query_foundry_agent(client, agent, query: str) -> dict:
-    """Send a query to a Foundry IQ agent and return response + context.
+    """Send a query to the Foundry IQ agent and return the grounded response.
 
-    Returns a dict with 'response', 'context', and 'citations' keys.
+    The Azure AI Search grounding is handled server-side by Foundry IQ.
+    Citations are extracted from URL annotations in the response.
     """
-    from azure.ai.agents.models import MessageRole, ListSortOrder
+    from azure.ai.agents.models import ListSortOrder, MessageRole
 
-    thread = client.agents.threads.create()
+    thread = client.threads.create()
+    client.messages.create(thread_id=thread.id, role="user", content=query)
 
-    client.agents.messages.create(
-        thread_id=thread.id,
-        role=MessageRole.USER,
-        content=query,
-    )
-
-    run = client.agents.runs.create_and_process(
-        thread_id=thread.id,
-        agent_id=agent.id,
+    run = client.runs.create_and_process(
+        thread_id=thread.id, agent_id=agent.id
     )
 
     if run.status == "failed":
-        return {"response": "", "context": "", "error": run.last_error}
+        error_msg = ""
+        if run.last_error:
+            error_msg = getattr(run.last_error, "message", str(run.last_error))
+        return {"response": "", "context": "", "citations": [], "error": error_msg}
 
-    messages = client.agents.messages.list(
-        thread_id=thread.id,
-        order=ListSortOrder.ASCENDING,
-    )
-
-    # Extract the last assistant message
+    # Extract response text and citation annotations
     response_text = ""
     citations = []
-    for msg in messages.data:
-        if msg.role == "assistant":
-            for content_item in msg.content:
-                if hasattr(content_item, "text"):
-                    response_text = content_item.text.value
-                    # Extract citation annotations
-                    if hasattr(content_item.text, "annotations"):
-                        for ann in content_item.text.annotations:
-                            if hasattr(ann, "url_citation") or hasattr(ann, "uri_citation"):
-                                cite = getattr(ann, "url_citation", None) or getattr(ann, "uri_citation", None)
-                                if cite:
-                                    citations.append({
-                                        "title": getattr(cite, "title", ""),
-                                        "url": getattr(cite, "url", "") or getattr(cite, "uri", ""),
-                                    })
+    messages = client.messages.list(
+        thread_id=thread.id, order=ListSortOrder.DESCENDING
+    )
+    for msg in messages:
+        if msg.role != MessageRole.AGENT:
+            continue
 
-    # Extract search tool output as context
-    context = ""
-    try:
-        run_steps = client.agents.run_steps.list(thread_id=thread.id, run_id=run.id)
-        for step in run_steps.data:
-            if hasattr(step, "step_details") and hasattr(step.step_details, "tool_calls"):
-                for tool_call in step.step_details.tool_calls:
-                    if hasattr(tool_call, "azure_ai_search"):
-                        search_output = tool_call.azure_ai_search
-                        if isinstance(search_output, dict):
-                            context += search_output.get("output", "")
-                        elif hasattr(search_output, "output"):
-                            context += str(search_output.output)
-    except Exception:
-        pass
+        # Replace citation placeholders with readable references
+        placeholder_map = {}
+        if msg.url_citation_annotations:
+            for ann in msg.url_citation_annotations:
+                title = ann.url_citation.title if ann.url_citation else ""
+                url = ann.url_citation.url if ann.url_citation else ""
+                placeholder_map[ann.text] = f" [{title}]({url})" if title else ""
+                citations.append({"title": title, "url": url})
+
+        for text_block in msg.text_messages:
+            text = text_block.text.value
+            for placeholder, replacement in placeholder_map.items():
+                text = text.replace(placeholder, replacement)
+            response_text = text
+        break  # Only need the latest agent message
 
     # Clean up thread
     try:
-        client.agents.threads.delete(thread.id)
+        client.threads.delete(thread.id)
     except Exception:
         pass
+
+    # Build context string from citations for eval compatibility
+    context = "\n".join(
+        f"[{c['title']}]({c['url']})" for c in citations if c.get("title")
+    )
 
     return {
         "response": response_text,
@@ -340,14 +326,15 @@ def query_foundry_agent(client, agent, query: str) -> dict:
 
 
 def run_foundry_chat() -> None:
-    """Run an interactive chat loop using the Foundry IQ Agent Service."""
+    """Run an interactive chat loop using GPT-5 via Foundry IQ Agent Service."""
+    endpoint = settings.foundry_endpoint or settings.azure_endpoint_base
     print(f"\n=== Foundry IQ Agent Service — GPT-5 with Azure AI Search ===")
-    print(f"Endpoint   : {settings.foundry_endpoint}")
+    print(f"Endpoint   : {endpoint}")
     print(f"Model      : {settings.foundry_model_deployment}")
     print(f"Search idx : {settings.search_index}")
     print("Type 'quit' to exit.\n")
 
-    client = build_foundry_client()
+    client = build_agents_client()
     agent = build_foundry_agent(client)
     print(f"Agent created: {agent.id}\n")
 
@@ -377,10 +364,12 @@ def run_foundry_chat() -> None:
                 print("--- Citations ---")
                 for i, cite in enumerate(result["citations"], 1):
                     print(f"  [{i}] {cite.get('title', 'N/A')}")
+                    if cite.get("url"):
+                        print(f"      {cite['url']}")
                 print()
     finally:
         try:
-            client.agents.delete_agent(agent.id)
+            client.delete_agent(agent.id)
             print("Agent cleaned up.")
         except Exception:
             pass
@@ -419,14 +408,18 @@ def test_direct_openai() -> None:
 
     print("\nSending test message: 'Hello, can you hear me?'")
     try:
-        completion = client.chat.completions.create(
+        create_kwargs = dict(
             model=settings.deployment,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "Hello, can you hear me?"},
             ],
-            temperature=0.7,
         )
+        # GPT-5 only accepts the default temperature (1)
+        if not settings.deployment.startswith("gpt-5"):
+            create_kwargs["temperature"] = 0.7
+
+        completion = client.chat.completions.create(**create_kwargs)
 
         choice = completion.choices[0]
         print(f"\nResponse: {choice.message.content}")
