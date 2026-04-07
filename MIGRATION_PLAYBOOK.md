@@ -263,17 +263,26 @@ has `Search Index Data Reader`. Once RBAC is corrected, the MCPTool path can be 
 (only supports "Responses API compatible tools"). The MCPTool-based approach is the correct
 alternative when RBAC is configured.
 
-**Eval results (20 queries):**
+**Eval results (20 queries, after optimization):**
 
 | Metric        | GPT-4.1 BYOD | GPT-5 Foundry IQ | Delta |
 |---------------|:------------:|:-----------------:|:-----:|
-| Groundedness  |    4.85      |      4.70         | -0.15 |
-| Relevance     |    4.50      |      4.45         | -0.05 |
-| Coherence     |    4.05      |      4.05         |  0.00 |
-| Fluency       |    3.85      |      3.65         | -0.20 |
-| Retrieval     |    5.00      |      4.95         | -0.05 |
+| Groundedness  |    4.85      |    **5.00** ✨     | +0.15 |
+| Relevance     |    4.50      |    **4.75**        | +0.25 |
+| Coherence     |    4.05      |    **4.10**        | +0.05 |
+| Fluency       |    3.85      |    **3.90**        | +0.05 |
+| Retrieval     |    5.00      |    **5.00**        |  0.00 |
+| Avg latency   |   5,294ms    |    41,213ms        | +7.8× |
+| Total tokens  |  107,863     |    122,040         | +13%  |
 
-Binary aggregates all 1.0 except fluency (0.95). Avg latency ~29s.
+All quality metrics match or exceed the GPT-4.1 BYOD baseline. Perfect groundedness (5.0/5.0)
+across all 20 queries. Latency is higher due to KB agentic retrieval + medium reasoning effort.
+
+**Optimizations applied:**
+- Enhanced system prompt with detailed answer-quality guidelines
+- KB reasoning effort bumped from `low` → `medium` (better query decomposition)
+- `rerankerThreshold: 1.5` and `alwaysQuerySource: true` for better retrieval
+- Retry logic for transient GPT-5 content-filter refusals
 
 **Verification:**
 - `python scripts/setup_foundry_iq.py --check` — confirms resources exist

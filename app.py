@@ -272,7 +272,7 @@ class FoundryAgentSession:
                     "content": [{"type": "text", "text": user_query}],
                 }
             ],
-            "retrievalReasoningEffort": {"kind": "low"},
+            "retrievalReasoningEffort": {"kind": "medium"},
             "includeActivity": False,
             "knowledgeSourceParams": [
                 {
@@ -282,6 +282,8 @@ class FoundryAgentSession:
                     ),
                     "includeReferences": True,
                     "includeReferenceSourceData": True,
+                    "alwaysQuerySource": True,
+                    "rerankerThreshold": 1.5,
                     "kind": "searchIndex",
                 }
             ],
@@ -346,22 +348,32 @@ class FoundryAgentSession:
 
         # Step 2: GPT-5 Responses API with retrieved context
         system_prompt = (
-            "You are a helpful safety compliance assistant. "
-            "Answer the user's question based ONLY on the retrieved documents below. "
-            "Cite source reference IDs (e.g., [0], [1]) in your response. "
-            "If the documents don't contain the answer, say so.\n\n"
+            "You are a knowledgeable safety compliance assistant. "
+            "Answer the user's question based ONLY on the retrieved documents below.\n\n"
+            "Guidelines:\n"
+            "- Provide thorough, well-structured answers with complete sentences.\n"
+            "- Use bullet points or numbered lists when listing multiple items.\n"
+            "- Include specific details, numbers, and requirements from the documents.\n"
+            "- Cite source reference IDs inline (e.g., [0], [1]) after each claim.\n"
+            "- If the documents don't fully answer the question, state what is and isn't covered.\n\n"
             f"--- Retrieved Documents ---\n{context}\n--- End Documents ---"
         )
 
         try:
-            response = self._openai.responses.create(
-                model=settings.foundry_model_deployment,
-                instructions=system_prompt,
-                input=user_query,
-            )
+            # Retry once on content-filter refusals (transient GPT-5 issue)
+            for attempt in range(2):
+                response = self._openai.responses.create(
+                    model=settings.foundry_model_deployment,
+                    instructions=system_prompt,
+                    input=user_query,
+                )
+                text = response.output_text or ""
+                if text and "cannot assist" not in text.lower():
+                    break
+
             usage = response.usage
             return {
-                "response": response.output_text or "",
+                "response": text,
                 "context": context,
                 "citations": citations,
                 "prompt_tokens": usage.input_tokens if usage else 0,
