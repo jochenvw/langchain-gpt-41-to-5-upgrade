@@ -213,142 +213,175 @@ def run_chat(mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Foundry IQ Agent Service — GPT-5 RAG via MCP + Knowledge Base
+# Foundry IQ — GPT-5 RAG via direct Knowledge Base retrieval + Responses API
 # ---------------------------------------------------------------------------
 
 
 class FoundryAgentSession:
-    """Manages a Foundry IQ Agent session with MCP-based knowledge retrieval.
+    """Foundry IQ session using direct knowledge base retrieval + GPT-5.
 
-    Uses AIProjectClient to create an agent with an MCPTool that connects to
-    a Foundry IQ knowledge base for grounded answers from Azure AI Search.
-    Each query runs in a new conversation for isolation.
+    Calls the Azure AI Search knowledge base ``retrieve`` API directly
+    (no MCP project connection or managed-identity RBAC required), then
+    passes the retrieved context to GPT-5 via the Responses API.
+
+    This gives us Foundry IQ's agentic retrieval (query planning, parallel
+    search, semantic reranking, answer synthesis) without the MCP auth setup.
     """
 
     def __init__(self):
-        from azure.ai.projects import AIProjectClient
         from azure.identity import DefaultAzureCredential
+        from openai import AzureOpenAI
 
         self._credential = DefaultAzureCredential()
-        self._project_client = AIProjectClient(
-            endpoint=settings.foundry_endpoint,
-            credential=self._credential,
-        )
-        self._openai_client = self._project_client.get_openai_client()
-        self._agent = None
 
-    def _mcp_endpoint(self) -> str:
-        """Construct the MCP endpoint for the knowledge base."""
-        kb_name = os.environ.get("FOUNDRY_KNOWLEDGE_BASE_NAME", "safety-knowledge-base")
-        search_endpoint = settings.search_endpoint.rstrip("/")
-        return (
-            f"{search_endpoint}/knowledgebases/{kb_name}"
-            f"/mcp?api-version=2025-11-01-preview"
+        # Client for Azure AI Search KB retrieve API
+        self._search_endpoint = settings.search_endpoint.rstrip("/")
+        self._kb_name = os.environ.get(
+            "FOUNDRY_KNOWLEDGE_BASE_NAME", "safety-knowledge-base"
         )
 
-    def _ensure_agent(self) -> None:
-        """Create the agent with MCPTool if it doesn't exist yet."""
-        if self._agent is not None:
-            return
-
-        from azure.ai.projects.models import MCPTool, PromptAgentDefinition
-
-        mcp_conn = os.environ.get("FOUNDRY_MCP_CONNECTION_NAME", "safety-kb-mcp")
-
-        mcp_tool = MCPTool(
-            server_label="knowledge-base",
-            server_url=self._mcp_endpoint(),
-            require_approval="never",
-            allowed_tools=["knowledge_base_retrieve"],
-            project_connection_id=mcp_conn,
+        # Client for GPT-5 Responses API via AzureOpenAI
+        token = self._credential.get_token(
+            "https://cognitiveservices.azure.com/.default"
+        )
+        self._openai = AzureOpenAI(
+            azure_endpoint=settings.azure_endpoint_base,
+            api_key=token.token,
+            api_version="2025-04-01-preview",
         )
 
-        self._agent = self._project_client.agents.create_version(
-            agent_name="safety-rag-agent",
-            definition=PromptAgentDefinition(
-                model=settings.foundry_model_deployment,
-                instructions=(
-                    "You are a helpful safety compliance assistant.\n"
-                    "Use the knowledge base tool to answer all user questions. "
-                    "Never answer from your own knowledge.\n"
-                    "When you use information from the knowledge base, include "
-                    "citations to the retrieved sources.\n"
-                    "If the knowledge base doesn't contain the answer, respond "
-                    'with "I don\'t know".'
-                ),
-                tools=[mcp_tool],
-            ),
+    def _retrieve(self, user_query: str) -> dict:
+        """Call the Foundry IQ knowledge base retrieve API.
+
+        Uses the ``messages`` input with ``low`` reasoning effort, which
+        enables model-based query planning for better retrieval quality.
+        The KB model uses API-key auth (configured server-side) so no
+        additional RBAC is needed.
+        """
+        import requests
+
+        token = self._credential.get_token("https://search.azure.com/.default")
+        url = (
+            f"{self._search_endpoint}/knowledgebases/{self._kb_name}"
+            f"/retrieve?api-version=2025-11-01-preview"
         )
+        body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": user_query}],
+                }
+            ],
+            "retrievalReasoningEffort": {"kind": "low"},
+            "includeActivity": False,
+            "knowledgeSourceParams": [
+                {
+                    "knowledgeSourceName": os.environ.get(
+                        "FOUNDRY_KNOWLEDGE_SOURCE_NAME",
+                        "safety-knowledge-base-source",
+                    ),
+                    "includeReferences": True,
+                    "includeReferenceSourceData": True,
+                    "kind": "searchIndex",
+                }
+            ],
+        }
+        r = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {token.token}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+        )
+        r.raise_for_status()
+        return r.json()
 
     def query(self, user_query: str) -> dict:
-        """Run a single RAG query via the Foundry IQ Agent Service.
+        """Run a Foundry IQ retrieval → GPT-5 generation pipeline.
 
         Returns a dict with 'response', 'context', and 'citations'.
         """
-        self._ensure_agent()
+        import json as _json
 
-        conversation = self._openai_client.conversations.create()
-        try:
-            response = self._openai_client.responses.create(
-                conversation=conversation.id,
-                input=user_query,
-                extra_body={
-                    "agent_reference": {
-                        "name": self._agent.name,
-                        "type": "agent_reference",
-                    }
-                },
-            )
+        # Step 1: Foundry IQ agentic retrieval
+        kb_result = self._retrieve(user_query)
 
-            response_text = response.output_text or ""
+        # Extract context chunks from the KB extractive response
+        context_parts = []
+        for msg in kb_result.get("response", []):
+            for block in msg.get("content", []):
+                raw = block.get("text", "")
+                try:
+                    chunks = _json.loads(raw)
+                    if isinstance(chunks, list):
+                        for chunk in chunks:
+                            ref_id = chunk.get("ref_id", "")
+                            text = chunk.get("content", "")
+                            if text:
+                                context_parts.append(f"[{ref_id}] {text}")
+                except (_json.JSONDecodeError, TypeError):
+                    if raw:
+                        context_parts.append(raw)
 
-            # Extract citation annotations
-            citations = []
-            for item in response.output:
-                if hasattr(item, "content"):
-                    for content_block in item.content:
-                        if hasattr(content_block, "annotations"):
-                            for ann in content_block.annotations:
-                                if hasattr(ann, "url"):
-                                    title = getattr(ann, "title", "") or "Source"
-                                    citations.append({"title": title, "url": ann.url})
+        # Extract references for citations
+        citations = []
+        for ref in kb_result.get("references", []):
+            src = ref.get("sourceData") or {}
+            citations.append({
+                "title": src.get("title", ref.get("docKey", "Source")),
+                "ref_id": ref.get("id", ""),
+                "doc_key": ref.get("docKey", ""),
+                "score": ref.get("rerankerScore"),
+            })
 
-            context = "\n\n".join(
-                f"[{i}] {c['title']}: {c['url']}"
-                for i, c in enumerate(citations, 1)
-            ) if citations else ""
+        context = "\n\n".join(context_parts)
 
+        if not context:
             return {
-                "response": response_text,
+                "response": "I don't have enough information to answer that question.",
+                "context": "",
+                "citations": [],
+            }
+
+        # Step 2: GPT-5 Responses API with retrieved context
+        system_prompt = (
+            "You are a helpful safety compliance assistant. "
+            "Answer the user's question based ONLY on the retrieved documents below. "
+            "Cite source reference IDs (e.g., [0], [1]) in your response. "
+            "If the documents don't contain the answer, say so.\n\n"
+            f"--- Retrieved Documents ---\n{context}\n--- End Documents ---"
+        )
+
+        try:
+            response = self._openai.responses.create(
+                model=settings.foundry_model_deployment,
+                instructions=system_prompt,
+                input=user_query,
+            )
+            return {
+                "response": response.output_text or "",
                 "context": context,
                 "citations": citations,
             }
         except Exception as exc:
             return {
                 "response": "",
-                "context": "",
-                "citations": [],
+                "context": context,
+                "citations": citations,
                 "error": str(exc),
             }
 
     def cleanup(self) -> None:
-        """Delete the agent version when done."""
-        if self._agent is not None:
-            try:
-                self._project_client.agents.delete_version(
-                    agent_name=self._agent.name,
-                    agent_version=self._agent.version,
-                )
-            except Exception:
-                pass
-            self._agent = None
+        """No-op — no server-side resources to clean up."""
+        pass
 
 
 def query_foundry_rag(query: str) -> dict:
-    """Run a GPT-5 RAG query via the Foundry IQ Agent Service.
+    """Run a GPT-5 RAG query via Foundry IQ retrieval + Responses API.
 
-    Creates a transient agent session, runs the query, and cleans up.
-    For batch usage (evals), use FoundryAgentSession directly to reuse the agent.
+    Creates a transient session, runs the query, and returns the result.
+    For batch usage (evals), use FoundryAgentSession directly to reuse the client.
     """
     session = FoundryAgentSession()
     try:
@@ -358,11 +391,11 @@ def query_foundry_rag(query: str) -> dict:
 
 
 def run_foundry_chat() -> None:
-    """Run an interactive chat loop using the Foundry IQ Agent Service."""
-    print(f"\n=== GPT-5 RAG — Foundry IQ Agent Service + Azure AI Search ===")
-    print(f"Endpoint   : {settings.foundry_endpoint}")
+    """Run an interactive chat loop using Foundry IQ retrieval + GPT-5."""
+    print(f"\n=== GPT-5 RAG — Foundry IQ Retrieval + Responses API ===")
+    print(f"Endpoint   : {settings.azure_endpoint_base}")
     print(f"Model      : {settings.foundry_model_deployment}")
-    print(f"Search idx : {settings.search_index}")
+    print(f"KB         : {os.environ.get('FOUNDRY_KNOWLEDGE_BASE_NAME', 'safety-knowledge-base')}")
     print("Type 'quit' to exit.\n")
 
     session = FoundryAgentSession()

@@ -84,15 +84,15 @@ def build_byod_target():
 
 
 def build_foundry_target():
-    """Return a callable that invokes GPT-5 RAG via the Foundry IQ Agent Service.
+    """Return a callable that invokes GPT-5 RAG via Foundry IQ retrieval.
 
-    Uses the Azure AI Foundry Agent Service with AzureAISearchTool to ground
-    responses in the Azure AI Search index. Replaces the deprecated BYOD pipeline.
+    Uses the Foundry IQ knowledge base retrieve API for agentic search,
+    then passes context to GPT-5 via the Responses API for generation.
     """
     from app import FoundryAgentSession
 
     session = FoundryAgentSession()
-    print("  Foundry IQ Agent Service target: Agent Service + Azure AI Search")
+    print("  Foundry IQ target: KB retrieve API + GPT-5 Responses API")
 
     def target_fn(query: str, **kwargs) -> dict:
         start = time.perf_counter()
