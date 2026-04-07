@@ -1,43 +1,43 @@
 {
   "gpt-5.4-mini": {
-    "groundedness": 5.0,
-    "relevance": 4.8,
-    "coherence": 4.2,
-    "fluency": 3.85,
-    "retrieval": 5.0,
-    "avg_latency_ms": 34009,
-    "total_tokens": 96753,
-    "avg_tokens": 4838
+    "groundedness": 4.95,
+    "relevance": 4.65,
+    "coherence": 4.1,
+    "fluency": 3.95,
+    "retrieval": 4.85,
+    "avg_latency_ms": 9900,
+    "total_tokens": 48800,
+    "avg_tokens": 2440
   },
   "gpt-5.4-nano": {
     "groundedness": 5.0,
-    "relevance": 4.45,
-    "coherence": 4.3,
-    "fluency": 3.8,
-    "retrieval": 5.0,
-    "avg_latency_ms": 23949,
-    "total_tokens": 99626,
-    "avg_tokens": 4981
+    "relevance": 4.55,
+    "coherence": 4.1,
+    "fluency": 4.0,
+    "retrieval": 4.85,
+    "avg_latency_ms": 10567,
+    "total_tokens": 48525,
+    "avg_tokens": 2426
   },
   "gpt-5.4": {
     "groundedness": 5.0,
-    "relevance": 4.866666666666666,
-    "coherence": 4.466666666666667,
-    "fluency": 4.0,
-    "retrieval": 5.0,
-    "avg_latency_ms": 38234,
-    "total_tokens": 73595,
-    "avg_tokens": 3680
+    "relevance": 4.888888888888889,
+    "coherence": 4.444444444444445,
+    "fluency": 4.055555555555555,
+    "retrieval": 4.9,
+    "avg_latency_ms": 15655,
+    "total_tokens": 45434,
+    "avg_tokens": 2272
   },
   "gpt-5.4-2": {
     "groundedness": 5.0,
-    "relevance": 4.85,
-    "coherence": 4.5,
-    "fluency": 3.95,
-    "retrieval": 5.0,
-    "avg_latency_ms": 31026,
-    "total_tokens": 94315,
-    "avg_tokens": 4716
+    "relevance": 4.75,
+    "coherence": 4.35,
+    "fluency": 3.9,
+    "retrieval": 4.95,
+    "avg_latency_ms": 14044,
+    "total_tokens": 50663,
+    "avg_tokens": 2533
   },
   "GPT-4.1 BYOD": {
     "groundedness": 4.85,

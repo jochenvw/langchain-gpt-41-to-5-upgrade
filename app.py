@@ -234,9 +234,16 @@ class FoundryAgentSession:
     def __init__(self, model_override: str | None = None):
         from azure.ai.projects import AIProjectClient
         from azure.identity import DefaultAzureCredential
+        import requests as _requests
 
         self._credential = DefaultAzureCredential()
         self._model = model_override or settings.foundry_model_deployment
+
+        # Reuse HTTP session for connection pooling
+        self._http = _requests.Session()
+
+        # Pre-cache auth token
+        self._token = self._credential.get_token("https://search.azure.com/.default")
 
         # Foundry IQ knowledge base config
         self._search_endpoint = settings.search_endpoint.rstrip("/")
@@ -254,14 +261,14 @@ class FoundryAgentSession:
     def _retrieve(self, user_query: str) -> dict:
         """Call the Foundry IQ knowledge base retrieve API.
 
-        Uses the ``messages`` input with ``low`` reasoning effort, which
-        enables model-based query planning for better retrieval quality.
-        The KB model uses API-key auth (configured server-side) so no
-        additional RBAC is needed.
+        Uses ``low`` reasoning effort for faster retrieval while still
+        enabling model-based query planning. Limits to top-5 documents.
         """
-        import requests
+        # Refresh token if expired
+        import time as _time
+        if self._token.expires_on - _time.time() < 120:
+            self._token = self._credential.get_token("https://search.azure.com/.default")
 
-        token = self._credential.get_token("https://search.azure.com/.default")
         url = (
             f"{self._search_endpoint}/knowledgebases/{self._kb_name}"
             f"/retrieve?api-version=2025-11-01-preview"
@@ -273,7 +280,7 @@ class FoundryAgentSession:
                     "content": [{"type": "text", "text": user_query}],
                 }
             ],
-            "retrievalReasoningEffort": {"kind": "medium"},
+            "retrievalReasoningEffort": {"kind": "low"},
             "includeActivity": False,
             "knowledgeSourceParams": [
                 {
@@ -283,16 +290,15 @@ class FoundryAgentSession:
                     ),
                     "includeReferences": True,
                     "includeReferenceSourceData": True,
-                    "alwaysQuerySource": True,
                     "rerankerThreshold": 1.5,
                     "kind": "searchIndex",
                 }
             ],
         }
-        r = requests.post(
+        r = self._http.post(
             url,
             headers={
-                "Authorization": f"Bearer {token.token}",
+                "Authorization": f"Bearer {self._token.token}",
                 "Content-Type": "application/json",
             },
             json=body,
@@ -310,7 +316,7 @@ class FoundryAgentSession:
         # Step 1: Foundry IQ agentic retrieval
         kb_result = self._retrieve(user_query)
 
-        # Extract context chunks from the KB extractive response
+        # Extract context chunks — keep top 5 for speed
         context_parts = []
         for msg in kb_result.get("response", []):
             for block in msg.get("content", []):
@@ -326,6 +332,7 @@ class FoundryAgentSession:
                 except (_json.JSONDecodeError, TypeError):
                     if raw:
                         context_parts.append(raw)
+        context_parts = context_parts[:5]
 
         # Extract references for citations
         citations = []
