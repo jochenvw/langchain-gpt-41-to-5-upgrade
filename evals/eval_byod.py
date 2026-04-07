@@ -83,16 +83,17 @@ def build_byod_target():
     return target_fn
 
 
-def build_foundry_target():
+def build_foundry_target(model_override: str | None = None):
     """Return a callable that invokes GPT-5 RAG via Foundry IQ retrieval.
 
     Uses the Foundry IQ knowledge base retrieve API for agentic search,
-    then passes context to GPT-5 via the Responses API for generation.
+    then passes context to the specified model via the Responses API.
     """
     from app import FoundryAgentSession
 
-    session = FoundryAgentSession()
-    print("  Foundry IQ target: KB retrieve API + GPT-5 Responses API")
+    session = FoundryAgentSession(model_override=model_override)
+    model_name = model_override or "gpt-5 (default)"
+    print(f"  Foundry IQ target: KB retrieve API + {model_name} Responses API")
 
     def target_fn(query: str, **kwargs) -> dict:
         start = time.perf_counter()
@@ -113,12 +114,14 @@ def build_foundry_target():
     return target_fn
 
 
-def main(use_foundry: bool = False):
+def main(use_foundry: bool = False, model: str | None = None):
     model_config = get_model_config()
     foundry_project = get_foundry_project()
     data_path = str(DATA_DIR / "byod_test_data.jsonl")
 
     backend = "Foundry IQ Agent Service + Azure AI Search" if use_foundry else "Legacy BYOD (On Your Data)"
+    if model:
+        backend += f" [{model}]"
 
     print("=" * 60)
     print(f"RAG Evaluation — {backend}")
@@ -127,12 +130,21 @@ def main(use_foundry: bool = False):
     if not use_foundry:
         print(f"Endpoint: {model_config['azure_endpoint']}")
         print(f"Deploy  : {model_config['azure_deployment']}")
+    else:
+        print(f"Model   : {model or 'gpt-5 (default)'}")
     print(f"Foundry : {'enabled — results will appear in portal' if foundry_project else 'disabled (local only)'}")
     print()
 
-    target = build_foundry_target() if use_foundry else build_byod_target()
+    target = build_foundry_target(model_override=model) if use_foundry else build_byod_target()
 
-    output_path = "./eval_results_byod_foundry.json" if use_foundry else "./eval_results_byod.json"
+    # Model-specific output file for Foundry runs
+    if use_foundry and model:
+        safe_name = model.replace(".", "_")
+        output_path = f"./eval_results_{safe_name}.json"
+    elif use_foundry:
+        output_path = "./eval_results_byod_foundry.json"
+    else:
+        output_path = "./eval_results_byod.json"
 
     try:
         evaluate_kwargs = dict(
@@ -205,5 +217,6 @@ def main(use_foundry: bool = False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--use-foundry", action="store_true", help="Use Foundry IQ Agent Service instead of BYOD")
+    parser.add_argument("--model", type=str, default=None, help="Override model deployment name (e.g. gpt-5.4-mini)")
     args = parser.parse_args()
-    main(use_foundry=args.use_foundry)
+    main(use_foundry=args.use_foundry, model=args.model)

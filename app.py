@@ -231,11 +231,12 @@ class FoundryAgentSession:
     the Agent Service for generation, avoiding that RBAC requirement.
     """
 
-    def __init__(self):
+    def __init__(self, model_override: str | None = None):
         from azure.ai.projects import AIProjectClient
         from azure.identity import DefaultAzureCredential
 
         self._credential = DefaultAzureCredential()
+        self._model = model_override or settings.foundry_model_deployment
 
         # Foundry IQ knowledge base config
         self._search_endpoint = settings.search_endpoint.rstrip("/")
@@ -363,7 +364,7 @@ class FoundryAgentSession:
             # Retry once on content-filter refusals (transient GPT-5 issue)
             for attempt in range(2):
                 response = self._openai.responses.create(
-                    model=settings.foundry_model_deployment,
+                    model=self._model,
                     instructions=system_prompt,
                     input=user_query,
                 )

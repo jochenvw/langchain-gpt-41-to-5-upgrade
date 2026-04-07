@@ -1,0 +1,62 @@
+{
+  "gpt-5.4-mini": {
+    "groundedness": 5.0,
+    "relevance": 4.8,
+    "coherence": 4.2,
+    "fluency": 3.85,
+    "retrieval": 5.0,
+    "avg_latency_ms": 34009,
+    "total_tokens": 96753,
+    "avg_tokens": 4838
+  },
+  "gpt-5.4-nano": {
+    "groundedness": 5.0,
+    "relevance": 4.45,
+    "coherence": 4.3,
+    "fluency": 3.8,
+    "retrieval": 5.0,
+    "avg_latency_ms": 23949,
+    "total_tokens": 99626,
+    "avg_tokens": 4981
+  },
+  "gpt-5.4": {
+    "groundedness": 5.0,
+    "relevance": 4.866666666666666,
+    "coherence": 4.466666666666667,
+    "fluency": 4.0,
+    "retrieval": 5.0,
+    "avg_latency_ms": 38234,
+    "total_tokens": 73595,
+    "avg_tokens": 3680
+  },
+  "gpt-5.4-2": {
+    "groundedness": 5.0,
+    "relevance": 4.85,
+    "coherence": 4.5,
+    "fluency": 3.95,
+    "retrieval": 5.0,
+    "avg_latency_ms": 31026,
+    "total_tokens": 94315,
+    "avg_tokens": 4716
+  },
+  "GPT-4.1 BYOD": {
+    "groundedness": 4.85,
+    "relevance": 4.5,
+    "coherence": 4.05,
+    "fluency": 3.85,
+    "retrieval": 5.0,
+    "avg_latency_ms": 5294,
+    "total_tokens": 107863,
+    "avg_tokens": 5393
+  },
+  "GPT-5 Foundry": {
+    "groundedness": 5.0,
+    "relevance": 4.75,
+    "coherence": 4.1,
+    "fluency": 3.9,
+    "retrieval": 5.0,
+    "avg_latency_ms": 41213,
+    "total_tokens": 122040,
+    "avg_tokens": 6102
+  }
+}
