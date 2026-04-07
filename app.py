@@ -213,42 +213,42 @@ def run_chat(mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Foundry IQ — GPT-5 RAG via direct Knowledge Base retrieval + Responses API
+# Foundry IQ + Agent Service — KB retrieval + GPT-5 via AIProjectClient
 # ---------------------------------------------------------------------------
 
 
 class FoundryAgentSession:
-    """Foundry IQ session using direct knowledge base retrieval + GPT-5.
+    """Foundry IQ session using KB retrieve API + Agent Service GPT-5 client.
 
-    Calls the Azure AI Search knowledge base ``retrieve`` API directly
-    (no MCP project connection or managed-identity RBAC required), then
-    passes the retrieved context to GPT-5 via the Responses API.
+    Uses the Foundry IQ knowledge base ``retrieve`` API for agentic retrieval
+    (query planning, parallel search, semantic reranking), then passes the
+    retrieved context to GPT-5 via the Agent Service's OpenAI-compatible
+    Responses API (obtained from ``AIProjectClient``).
 
-    This gives us Foundry IQ's agentic retrieval (query planning, parallel
-    search, semantic reranking, answer synthesis) without the MCP auth setup.
+    The MCP-based agent path (MCPTool + agent_reference) requires the project
+    managed identity to have Search Service Contributor on the search service.
+    This direct approach uses the caller's own credentials for retrieval and
+    the Agent Service for generation, avoiding that RBAC requirement.
     """
 
     def __init__(self):
+        from azure.ai.projects import AIProjectClient
         from azure.identity import DefaultAzureCredential
-        from openai import AzureOpenAI
 
         self._credential = DefaultAzureCredential()
 
-        # Client for Azure AI Search KB retrieve API
+        # Foundry IQ knowledge base config
         self._search_endpoint = settings.search_endpoint.rstrip("/")
         self._kb_name = os.environ.get(
             "FOUNDRY_KNOWLEDGE_BASE_NAME", "safety-knowledge-base"
         )
 
-        # Client for GPT-5 Responses API via AzureOpenAI
-        token = self._credential.get_token(
-            "https://cognitiveservices.azure.com/.default"
+        # Agent Service client for GPT-5 Responses API
+        self._project_client = AIProjectClient(
+            endpoint=settings.foundry_endpoint,
+            credential=self._credential,
         )
-        self._openai = AzureOpenAI(
-            azure_endpoint=settings.azure_endpoint_base,
-            api_key=token.token,
-            api_version="2025-04-01-preview",
-        )
+        self._openai = self._project_client.get_openai_client()
 
     def _retrieve(self, user_query: str) -> dict:
         """Call the Foundry IQ knowledge base retrieve API.
@@ -391,9 +391,9 @@ def query_foundry_rag(query: str) -> dict:
 
 
 def run_foundry_chat() -> None:
-    """Run an interactive chat loop using Foundry IQ retrieval + GPT-5."""
-    print(f"\n=== GPT-5 RAG — Foundry IQ Retrieval + Responses API ===")
-    print(f"Endpoint   : {settings.azure_endpoint_base}")
+    """Run an interactive chat loop using Foundry IQ + Agent Service."""
+    print(f"\n=== GPT-5 RAG — Foundry IQ KB + Agent Service ===")
+    print(f"Project    : {settings.foundry_endpoint}")
     print(f"Model      : {settings.foundry_model_deployment}")
     print(f"KB         : {os.environ.get('FOUNDRY_KNOWLEDGE_BASE_NAME', 'safety-knowledge-base')}")
     print("Type 'quit' to exit.\n")

@@ -221,17 +221,17 @@ directly via the Azure AI Search SDK and pass results as context to the LLM.
 > **Status**: ✅ DONE — evals pass, scores on par with GPT 4.1 baseline
 > **Prerequisite**: Step 3 complete (standalone RAG chain working).
 
-**Goal:** Replace the custom RAG chain with Azure AI Foundry IQ (knowledge base),
+**Goal:** Replace the custom RAG chain with Azure AI Foundry IQ + Agent Service,
 which is Microsoft's recommended replacement for On Your Data.
 
-**Architecture — Foundry IQ KB Retrieve + GPT-5 Responses API:**
+**Architecture — Foundry IQ KB Retrieve + Agent Service Responses API:**
 
 ```
 User query
   → Foundry IQ KB retrieve API (agentic retrieval: query planning, semantic reranking)
   → Extractive context + references
-  → GPT-5 Responses API (answer synthesis with citations)
-  → Response
+  → Agent Service (AIProjectClient) → GPT-5 Responses API (answer synthesis)
+  → Response with citations
 ```
 
 **What was done:**
@@ -239,12 +239,13 @@ User query
 1. **Setup script** (`scripts/setup_foundry_iq.py`) — provisions Foundry IQ resources:
    - Creates a knowledge source from the existing `safety-source-index`
    - Creates a knowledge base with model-based query planning (API-key auth)
+   - Creates MCP project connection (for future MCPTool-based agent path)
 
 2. **App updated** (`app.py`) — `FoundryAgentSession` class uses:
-   - Direct KB retrieve API (`POST /knowledgebases/{name}/retrieve`) with `messages` input
-   - `low` reasoning effort for model-based query planning (no RBAC needed — uses API key)
-   - `AzureOpenAI` Responses API for answer synthesis with retrieved context
-   - No MCP connection or managed identity required
+   - `AIProjectClient` (Agent Service SDK) for the GPT-5 Responses API client
+   - Foundry IQ KB retrieve API (`POST /knowledgebases/{name}/retrieve`) with `messages` input
+   - `low` reasoning effort for model-based query planning
+   - Answer synthesis via Agent Service's GPT-5 Responses API
 
 3. **Eval updated** (`evals/eval_byod.py`) — `build_foundry_target()` uses `FoundryAgentSession`
    to reuse the client across all eval queries.
@@ -253,21 +254,26 @@ User query
    - `FOUNDRY_KNOWLEDGE_BASE_NAME` — knowledge base name in Azure AI Search
    - `FOUNDRY_KNOWLEDGE_SOURCE_NAME` — knowledge source name
 
+**MCPTool agent path (future):** The full MCP-based agent (MCPTool + agent_reference) is
+implemented but requires the **project managed identity** (`70c4dfc0-71e6-4cdb-a518-fabaeb61bf2b`)
+to have `Search Service Contributor` on the search service. Currently, only the user identity
+has `Search Index Data Reader`. Once RBAC is corrected, the MCPTool path can be activated.
+
 **GPT-5 limitation:** GPT-5 does NOT support the `AzureAISearchTool` in the Agents API
-(only supports "Responses API compatible tools"). The direct KB retrieve API approach
-bypasses this limitation entirely.
+(only supports "Responses API compatible tools"). The MCPTool-based approach is the correct
+alternative when RBAC is configured.
 
 **Eval results (20 queries):**
 
 | Metric        | GPT-4.1 BYOD | GPT-5 Foundry IQ | Delta |
 |---------------|:------------:|:-----------------:|:-----:|
-| Groundedness  |    4.85      |      4.75         | -0.10 |
-| Relevance     |    4.50      |      4.30         | -0.20 |
+| Groundedness  |    4.85      |      4.70         | -0.15 |
+| Relevance     |    4.50      |      4.45         | -0.05 |
 | Coherence     |    4.05      |      4.05         |  0.00 |
-| Fluency       |    3.85      |      3.80         | -0.05 |
+| Fluency       |    3.85      |      3.65         | -0.20 |
 | Retrieval     |    5.00      |      4.95         | -0.05 |
 
-All binary aggregates = 1.0 (no query failures). Avg latency ~31s.
+Binary aggregates all 1.0 except fluency (0.95). Avg latency ~29s.
 
 **Verification:**
 - `python scripts/setup_foundry_iq.py --check` — confirms resources exist

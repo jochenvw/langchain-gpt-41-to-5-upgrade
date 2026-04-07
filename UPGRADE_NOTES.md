@@ -63,14 +63,14 @@ context. Microsoft must update the On Your Data service to use
 - Remove or conditionally set `temperature` based on model
 - Use `max_completion_tokens` instead of `max_tokens` in any explicit token limits
 
-### BYOD / On Your Data → Foundry IQ Knowledge Base
+### BYOD / On Your Data → Foundry IQ + Agent Service
 - **BYOD is deprecated** and does not support GPT 5.
-- **Migration**: Replaced with Foundry IQ direct KB retrieve API + GPT-5 Responses API:
+- **Migration**: Replaced with Foundry IQ KB retrieve API + Agent Service Responses API:
   1. Azure AI Search knowledge source + knowledge base (agentic retrieval)
-  2. KB configured with API-key auth for model-based query planning (no RBAC needed)
-  3. Direct `POST /knowledgebases/{name}/retrieve` API call for retrieval
-  4. GPT-5 Responses API for answer synthesis with retrieved context
+  2. KB configured with API-key auth for model-based query planning
+  3. KB retrieve API (`POST /knowledgebases/{name}/retrieve`) for agentic search
+  4. `AIProjectClient` (Agent Service SDK) for GPT-5 Responses API generation
 - **Setup**: Run `python scripts/setup_foundry_iq.py` to provision resources
 - **Usage**: `python app.py --mode foundry` for interactive chat
 - **Evals**: `python -m evals.eval_byod --use-foundry` to run eval suite
-- **No RBAC required**: Uses API-key auth for model, bearer token for search
+- **Future**: Full MCPTool agent path available once project managed identity gets `Search Service Contributor` RBAC
