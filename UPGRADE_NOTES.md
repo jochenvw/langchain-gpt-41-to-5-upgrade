@@ -63,7 +63,14 @@ context. Microsoft must update the On Your Data service to use
 - Remove or conditionally set `temperature` based on model
 - Use `max_completion_tokens` instead of `max_tokens` in any explicit token limits
 
-### BYOD / On Your Data
-- **Blocked**: Waiting on Azure to update the On Your Data pipeline to support `max_completion_tokens` for GPT 5 models.
-- **Workaround**: Continue using GPT 4.1 for BYOD workloads until Azure resolves this.
-- Track: https://aka.ms/aoaioydauthentication for updates
+### BYOD / On Your Data → Foundry IQ Agent Service
+- **BYOD is deprecated** and does not support GPT 5.
+- **Migration**: Replaced with Foundry IQ Agent Service using MCP (Model Context Protocol):
+  1. Azure AI Search knowledge source + knowledge base (agentic retrieval)
+  2. MCP project connection linking Foundry project to the knowledge base
+  3. Agent created via `AIProjectClient.agents.create_version()` with `MCPTool`
+  4. Queries via `openai_client.responses.create()` with `agent_reference`
+- **Setup**: Run `python scripts/setup_foundry_iq.py` to provision resources
+- **Usage**: `python app.py --mode foundry` for interactive chat
+- **Evals**: `python -m evals.eval_byod --use-foundry` to run eval suite
+- **RBAC required**: Project managed identity needs `Search Index Data Reader` on the search service

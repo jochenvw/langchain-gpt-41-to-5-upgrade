@@ -3,13 +3,14 @@
 Supports four modes:
   --mode chat     Simple chat (no BYOD) — baseline connectivity test
   --mode byod     Chat with Azure AI Search "On Your Data" (BYOD, legacy GPT-4.1 only)
-  --mode foundry  GPT-5 RAG via Responses API + direct Azure AI Search
+  --mode foundry  GPT-5 RAG via Foundry IQ Agent Service + Azure AI Search
   --mode direct   Direct OpenAI SDK call — bypasses LangChain entirely
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import traceback
 from typing import Any
@@ -212,143 +213,196 @@ def run_chat(mode: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Foundry: GPT-5 RAG via Responses API + direct Azure AI Search
+# Foundry IQ Agent Service — GPT-5 RAG via MCP + Knowledge Base
 # ---------------------------------------------------------------------------
 
 
-def search_documents(query: str, top_k: int = 5) -> list[dict]:
-    """Query Azure AI Search directly and return top-k document snippets.
+class FoundryAgentSession:
+    """Manages a Foundry IQ Agent session with MCP-based knowledge retrieval.
 
-    Uses the azure-search-documents SDK with the same auth/index config as
-    the legacy BYOD pipeline, but without the deprecated On Your Data layer.
+    Uses AIProjectClient to create an agent with an MCPTool that connects to
+    a Foundry IQ knowledge base for grounded answers from Azure AI Search.
+    Each query runs in a new conversation for isolation.
     """
-    from azure.identity import DefaultAzureCredential
-    from azure.search.documents import SearchClient
 
-    search_auth_type = settings.search_auth_type
+    def __init__(self):
+        from azure.ai.projects import AIProjectClient
+        from azure.identity import DefaultAzureCredential
 
-    if search_auth_type == "key":
-        from azure.core.credentials import AzureKeyCredential
-        credential = AzureKeyCredential(settings.search_api_key)
-    else:
-        credential = DefaultAzureCredential()
-
-    client = SearchClient(
-        endpoint=settings.search_endpoint,
-        index_name=settings.search_index,
-        credential=credential,
-    )
-
-    results = client.search(query, top=top_k)
-    docs = []
-    for r in results:
-        content = r.get("snippet", r.get("content", ""))
-        source = r.get("blob_url", r.get("title", "unknown"))
-        if content:
-            docs.append({"content": content, "source": source})
-    return docs
-
-
-def build_responses_client():
-    """Build an OpenAI client configured for the Azure Responses API."""
-    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-
-    base_url = settings.azure_endpoint_base.rstrip("/")
-    if not base_url.endswith("/openai/v1"):
-        base_url += "/openai/v1/"
-    else:
-        base_url += "/"
-
-    if settings.auth_type == "entra":
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
-            "https://cognitiveservices.azure.com/.default",
+        self._credential = DefaultAzureCredential()
+        self._project_client = AIProjectClient(
+            endpoint=settings.foundry_endpoint,
+            credential=self._credential,
         )
-        api_key = token_provider()
-    else:
-        api_key = settings.api_key
+        self._openai_client = self._project_client.get_openai_client()
+        self._agent = None
 
-    from openai import OpenAI
-    return OpenAI(base_url=base_url, api_key=api_key)
+    def _mcp_endpoint(self) -> str:
+        """Construct the MCP endpoint for the knowledge base."""
+        kb_name = os.environ.get("FOUNDRY_KNOWLEDGE_BASE_NAME", "safety-knowledge-base")
+        search_endpoint = settings.search_endpoint.rstrip("/")
+        return (
+            f"{search_endpoint}/knowledgebases/{kb_name}"
+            f"/mcp?api-version=2025-11-01-preview"
+        )
+
+    def _ensure_agent(self) -> None:
+        """Create the agent with MCPTool if it doesn't exist yet."""
+        if self._agent is not None:
+            return
+
+        from azure.ai.projects.models import MCPTool, PromptAgentDefinition
+
+        mcp_conn = os.environ.get("FOUNDRY_MCP_CONNECTION_NAME", "safety-kb-mcp")
+
+        mcp_tool = MCPTool(
+            server_label="knowledge-base",
+            server_url=self._mcp_endpoint(),
+            require_approval="never",
+            allowed_tools=["knowledge_base_retrieve"],
+            project_connection_id=mcp_conn,
+        )
+
+        self._agent = self._project_client.agents.create_version(
+            agent_name="safety-rag-agent",
+            definition=PromptAgentDefinition(
+                model=settings.foundry_model_deployment,
+                instructions=(
+                    "You are a helpful safety compliance assistant.\n"
+                    "Use the knowledge base tool to answer all user questions. "
+                    "Never answer from your own knowledge.\n"
+                    "When you use information from the knowledge base, include "
+                    "citations to the retrieved sources.\n"
+                    "If the knowledge base doesn't contain the answer, respond "
+                    'with "I don\'t know".'
+                ),
+                tools=[mcp_tool],
+            ),
+        )
+
+    def query(self, user_query: str) -> dict:
+        """Run a single RAG query via the Foundry IQ Agent Service.
+
+        Returns a dict with 'response', 'context', and 'citations'.
+        """
+        self._ensure_agent()
+
+        conversation = self._openai_client.conversations.create()
+        try:
+            response = self._openai_client.responses.create(
+                conversation=conversation.id,
+                input=user_query,
+                extra_body={
+                    "agent_reference": {
+                        "name": self._agent.name,
+                        "type": "agent_reference",
+                    }
+                },
+            )
+
+            response_text = response.output_text or ""
+
+            # Extract citation annotations
+            citations = []
+            for item in response.output:
+                if hasattr(item, "content"):
+                    for content_block in item.content:
+                        if hasattr(content_block, "annotations"):
+                            for ann in content_block.annotations:
+                                if hasattr(ann, "url"):
+                                    title = getattr(ann, "title", "") or "Source"
+                                    citations.append({"title": title, "url": ann.url})
+
+            context = "\n\n".join(
+                f"[{i}] {c['title']}: {c['url']}"
+                for i, c in enumerate(citations, 1)
+            ) if citations else ""
+
+            return {
+                "response": response_text,
+                "context": context,
+                "citations": citations,
+            }
+        except Exception as exc:
+            return {
+                "response": "",
+                "context": "",
+                "citations": [],
+                "error": str(exc),
+            }
+
+    def cleanup(self) -> None:
+        """Delete the agent version when done."""
+        if self._agent is not None:
+            try:
+                self._project_client.agents.delete_version(
+                    agent_name=self._agent.name,
+                    agent_version=self._agent.version,
+                )
+            except Exception:
+                pass
+            self._agent = None
 
 
-def query_foundry_rag(query: str, top_k: int = 5) -> dict:
-    """Run a GPT-5 RAG query: search Azure AI Search, then call GPT-5.
+def query_foundry_rag(query: str) -> dict:
+    """Run a GPT-5 RAG query via the Foundry IQ Agent Service.
 
-    This replaces the deprecated On Your Data (BYOD) pipeline with a direct
-    search → context injection → GPT-5 Responses API flow.
-    Returns a dict with 'response', 'context', and 'citations'.
+    Creates a transient agent session, runs the query, and cleans up.
+    For batch usage (evals), use FoundryAgentSession directly to reuse the agent.
     """
-    # Step 1: Retrieve relevant documents
-    docs = search_documents(query, top_k=top_k)
-
-    context_parts = []
-    citations = []
-    for i, doc in enumerate(docs, 1):
-        context_parts.append(f"[{i}] {doc['content']}")
-        citations.append({"title": f"Source {i}", "url": doc["source"]})
-    context = "\n\n".join(context_parts)
-
-    # Step 2: Call GPT-5 via Responses API with context
-    client = build_responses_client()
-    system_prompt = (
-        "You are a helpful safety compliance assistant. "
-        "Answer the user's question based on the following retrieved documents. "
-        "Cite the source numbers [1], [2], etc. in your response.\n\n"
-        f"--- Retrieved Documents ---\n{context}\n--- End Documents ---"
-    )
-
-    response = client.responses.create(
-        model=settings.foundry_model_deployment,
-        instructions=system_prompt,
-        input=query,
-    )
-
-    return {
-        "response": response.output_text or "",
-        "context": context,
-        "citations": citations,
-    }
+    session = FoundryAgentSession()
+    try:
+        return session.query(query)
+    finally:
+        session.cleanup()
 
 
 def run_foundry_chat() -> None:
-    """Run an interactive chat loop using GPT-5 RAG via Responses API."""
-    print(f"\n=== GPT-5 RAG — Responses API + Azure AI Search ===")
-    print(f"Endpoint   : {settings.azure_endpoint_base}")
+    """Run an interactive chat loop using the Foundry IQ Agent Service."""
+    print(f"\n=== GPT-5 RAG — Foundry IQ Agent Service + Azure AI Search ===")
+    print(f"Endpoint   : {settings.foundry_endpoint}")
     print(f"Model      : {settings.foundry_model_deployment}")
     print(f"Search idx : {settings.search_index}")
     print("Type 'quit' to exit.\n")
 
-    while True:
-        try:
-            user_input = input("You: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye!")
-            break
+    session = FoundryAgentSession()
+    try:
+        while True:
+            try:
+                user_input = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!")
+                break
 
-        if not user_input:
-            continue
-        if user_input.lower() in ("quit", "exit"):
-            print("Goodbye!")
-            break
-
-        try:
-            result = query_foundry_rag(user_input)
-
-            if result.get("error"):
-                print(f"\n[ERROR] {result['error']}\n")
+            if not user_input:
                 continue
+            if user_input.lower() in ("quit", "exit"):
+                print("Goodbye!")
+                break
 
-            print(f"\nAssistant: {result['response']}\n")
+            try:
+                result = session.query(user_input)
 
-            if result.get("citations"):
-                print("--- Citations ---")
-                for i, cite in enumerate(result["citations"], 1):
-                    print(f"  [{i}] {cite.get('url', 'N/A')}")
-                print()
+                if result.get("error"):
+                    print(f"\n[ERROR] {result['error']}\n")
+                    continue
 
-        except Exception as exc:
-            _handle_error(exc)
+                print(f"\nAssistant: {result['response']}\n")
+
+                if result.get("citations"):
+                    print("--- Citations ---")
+                    for i, cite in enumerate(result["citations"], 1):
+                        title = cite.get("title", "N/A")
+                        url = cite.get("url", "")
+                        print(f"  [{i}] {title}")
+                        if url:
+                            print(f"      {url}")
+                    print()
+
+            except Exception as exc:
+                _handle_error(exc)
+    finally:
+        session.cleanup()
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +501,7 @@ def main() -> None:
         "--mode",
         choices=["chat", "byod", "foundry", "direct"],
         default="chat",
-        help="chat = simple chat, byod = On Your Data, foundry = Foundry IQ Agent, direct = raw OpenAI SDK test",
+        help="chat = simple chat, byod = On Your Data, foundry = Foundry IQ Agent Service, direct = raw OpenAI SDK test",
     )
     parser.add_argument(
         "-v", "--verbose",

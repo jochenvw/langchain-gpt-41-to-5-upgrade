@@ -218,44 +218,50 @@ directly via the Azure AI Search SDK and pass results as context to the LLM.
 
 ## Step 4: Switch to Foundry Agent Service + Foundry IQ
 
-> **Status**: NOT STARTED
+> **Status**: IN PROGRESS — infrastructure provisioned, pending RBAC
 > **Prerequisite**: Step 3 complete (standalone RAG chain working).
 
 **Goal:** Replace the custom RAG chain with Azure AI Foundry Agent Service and Foundry IQ,
 which is Microsoft's recommended replacement for On Your Data.
 
-**Instructions for an LLM agent:**
+**What was done:**
 
-1. **Research Foundry IQ** — fetch the latest docs:
-   - https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/what-is-foundry-iq
-   - https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/foundry-iq-connect
+1. **Setup script** (`scripts/setup_foundry_iq.py`) — provisions Foundry IQ resources:
+   - Creates a knowledge source from the existing `safety-source-index`
+   - Creates a knowledge base with agentic retrieval (answer synthesis mode)
+   - Creates a RemoteTool MCP project connection linking the Foundry project to the KB
 
-2. **Provision Foundry resources** — create or configure:
-   - Azure AI Foundry project
-   - Connect the existing `safety-source-index` as a Foundry IQ knowledge base
-   - Deploy GPT 5 model within the Foundry project
+2. **App updated** (`app.py`) — `FoundryAgentSession` class uses:
+   - `AIProjectClient` + `MCPTool` to create an agent with Foundry IQ knowledge base
+   - `openai_client.responses.create()` with `agent_reference` for queries
+   - Proper cleanup of agent versions after use
 
-3. **Update the app** to use the Foundry Agent SDK instead of LangChain BYOD:
-   - Replace `get_byod_extra_body()` with Foundry Agent invocation
-   - Keep the LangChain chat path for non-RAG queries
-   - Apply GPT 5 client-side fixes:
-     - Remove `temperature=0.7` from `build_llm()` (line 35) and `test_direct_openai()` (line 203)
-     - Use `max_completion_tokens` instead of `max_tokens` anywhere token limits are set
+3. **Eval updated** (`evals/eval_byod.py`) — `build_foundry_target()` uses `FoundryAgentSession`
+   to reuse the agent across all eval queries, with cleanup on completion.
 
-4. **Update .env** — set `AZURE_OPENAI_DEPLOYMENT=gpt-5` and add any Foundry-specific config
+4. **Config updated** — new env vars:
+   - `FOUNDRY_KNOWLEDGE_BASE_NAME` — knowledge base name in Azure AI Search
+   - `FOUNDRY_MCP_CONNECTION_NAME` — project connection name for MCP
 
-5. **Run full eval suite** against the Foundry-backed pipeline:
-   ```bash
-   python -m evals.run_all
-   ```
+**Blocking issue:** The project's managed identity needs `Search Index Data Reader` role
+on the Azure AI Search service. This requires Owner / User Access Administrator permissions.
 
-6. **Compare scores** to Step 2 baseline — accept if within tolerance, investigate regressions
+**To unblock:**
+```bash
+az role assignment create \
+  --assignee <project-managed-identity-principal-id> \
+  --role "Search Index Data Reader" \
+  --scope <search-service-arm-resource-id>
+```
+
+**GPT-5 limitation:** GPT-5 does NOT support the `AzureAISearchTool` in the Agents API
+(only supports "Responses API compatible tools"). The correct approach is the MCP-based
+Foundry IQ integration, which uses the Responses API under the hood.
 
 **Verification:**
-- App runs in all modes (chat, byod-replacement, direct) without errors on GPT 5
-- Eval scores meet or exceed Step 2 baseline
-- No `temperature` or `max_tokens` errors
-- CI workflow passes
+- `python scripts/setup_foundry_iq.py --check` — confirms resources exist
+- `python app.py --mode foundry` — interactive chat via Foundry IQ
+- `python -m evals.eval_byod --use-foundry` — eval suite via Foundry IQ
 
 ---
 
