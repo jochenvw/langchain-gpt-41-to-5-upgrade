@@ -359,10 +359,14 @@ class FoundryAgentSession:
                 instructions=system_prompt,
                 input=user_query,
             )
+            usage = response.usage
             return {
                 "response": response.output_text or "",
                 "context": context,
                 "citations": citations,
+                "prompt_tokens": usage.input_tokens if usage else 0,
+                "completion_tokens": usage.output_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
             }
         except Exception as exc:
             return {

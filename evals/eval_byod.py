@@ -103,9 +103,9 @@ def build_foundry_target():
             "response": result.get("response", ""),
             "context": result.get("context", ""),
             "latency_ms": round(latency_ms, 1),
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
+            "prompt_tokens": result.get("prompt_tokens", 0),
+            "completion_tokens": result.get("completion_tokens", 0),
+            "total_tokens": result.get("total_tokens", 0),
         }
 
     # Attach cleanup so the caller can clean up the agent
