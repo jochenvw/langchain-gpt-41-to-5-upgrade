@@ -244,6 +244,123 @@ Example output:
 
 
 # ---------------------------------------------------------------------------
+# Multi-document query generation — questions requiring 2+ sources
+# ---------------------------------------------------------------------------
+
+def generate_multi_doc_queries(
+    docs: list[dict],
+    num_pairs: int,
+    deployment: str | None = None,
+) -> list[dict]:
+    """Generate questions that require information from two documents.
+
+    Samples document pairs, feeds both excerpts to GPT, and asks for questions
+    that can only be answered by combining information from both sources.
+    This tests the retriever's ability to surface multiple relevant documents.
+    """
+    from openai import AzureOpenAI
+    from config import settings
+
+    if len(docs) < 2:
+        print("\nSkipping multi-doc generation (need at least 2 documents).")
+        return []
+
+    model = deployment or settings.deployment
+    print(f"\nGenerating multi-doc queries ({num_pairs} pairs) using {model}...")
+
+    client_kwargs = dict(
+        azure_endpoint=settings.azure_endpoint_base,
+        api_version=settings.api_version,
+    )
+    if settings.auth_type == "entra":
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        credential = DefaultAzureCredential()
+        client_kwargs["azure_ad_token_provider"] = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+    else:
+        client_kwargs["api_key"] = settings.api_key
+        client_kwargs["default_headers"] = {"api-key": settings.api_key}
+
+    client = AzureOpenAI(**client_kwargs)
+
+    create_kwargs: dict = {}
+    if not model.startswith("gpt-5"):
+        create_kwargs["temperature"] = 0.7
+
+    system_prompt = """You are an evaluation dataset generator. You are given TWO document excerpts.
+Generate exactly 2 realistic questions that REQUIRE information from BOTH documents to answer fully.
+The question should need facts from Document A AND Document B — a single document alone should not
+be sufficient for a complete answer.
+
+Also provide a concise ground-truth answer for each question, citing relevant facts from both documents.
+
+Return a JSON array of objects with "query" and "ground_truth" keys. No markdown fencing.
+
+Example output:
+[{"query": "How do the PPE requirements differ between confined spaces and hot work areas?", "ground_truth": "Confined spaces require respiratory protection and atmospheric monitoring, while hot work areas require fire-resistant clothing and a dedicated fire watch."}]"""
+
+    # Build pairs — random sampling, avoid duplicates
+    all_pairs = []
+    doc_indices = list(range(len(docs)))
+    for _ in range(num_pairs * 3):  # oversample to account for failures
+        if len(all_pairs) >= num_pairs:
+            break
+        pair = tuple(sorted(random.sample(doc_indices, 2)))
+        if pair not in all_pairs:
+            all_pairs.append(pair)
+
+    eval_items = []
+    for pi, (idx_a, idx_b) in enumerate(all_pairs[:num_pairs]):
+        doc_a, doc_b = docs[idx_a], docs[idx_b]
+        excerpt_a = doc_a["content"][:2000]
+        excerpt_b = doc_b["content"][:2000]
+
+        user_msg = (
+            f"Document A (title: {doc_a['title']}):\n\n{excerpt_a}\n\n"
+            f"---\n\n"
+            f"Document B (title: {doc_b['title']}):\n\n{excerpt_b}"
+        )
+
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                **create_kwargs,
+            )
+            raw = response.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1]
+                if raw.endswith("```"):
+                    raw = raw[: raw.rfind("```")]
+            items = json.loads(raw)
+
+            for item in items[:2]:
+                eval_items.append({
+                    "query": item["query"],
+                    "ground_truth": item.get("ground_truth", ""),
+                    "source_doc_ids": [doc_a["id"], doc_b["id"]],
+                    "source_doc_titles": [doc_a["title"], doc_b["title"]],
+                    "multi_doc": True,
+                })
+
+            titles = f"{doc_a['title'][:25]} + {doc_b['title'][:25]}"
+            print(f"  [{pi+1}/{num_pairs}] {titles:<55} → {len(items)} queries")
+
+        except Exception as exc:
+            print(f"  [{pi+1}/{num_pairs}] FAILED: {exc}")
+            continue
+
+        time.sleep(0.5)
+
+    print(f"\nGenerated {len(eval_items)} multi-doc eval queries.")
+    return eval_items
+
+
+# ---------------------------------------------------------------------------
 # Retrieval validation — ARES-style filtering
 # ---------------------------------------------------------------------------
 
@@ -252,12 +369,13 @@ def filter_queries_by_retrievability(
     eval_items: list[dict],
     top_k: int = 5,
 ) -> list[dict]:
-    """Filter out synthetic queries whose source document is not retrievable.
+    """Filter out synthetic queries whose source document(s) are not retrievable.
 
     For each generated query, runs a search against the same index and checks
-    whether the original source document appears in the top-K results.  Queries
-    that fail this check are discarded — they represent weak or ambiguous
-    questions that would produce misleading eval scores.
+    whether the original source document(s) appear in the top-K results.
+
+    - Single-doc queries: source doc must be in top-K
+    - Multi-doc queries: ALL source docs must be in top-K
 
     This mirrors the ARES approach: after generating a synthetic query, verify
     that the original source passage is retrievable; otherwise reject it.
@@ -269,10 +387,13 @@ def filter_queries_by_retrievability(
 
     for i, item in enumerate(eval_items):
         query_text = item["query"]
-        expected_id = item.get("source_doc_id", "").strip()
 
-        if not expected_id:
-            # No source doc ID — can't validate, keep by default
+        # Collect expected IDs — support both single and multi-doc
+        if item.get("source_doc_ids"):
+            expected_ids = [sid.strip() for sid in item["source_doc_ids"]]
+        elif item.get("source_doc_id", "").strip():
+            expected_ids = [item["source_doc_id"].strip()]
+        else:
             kept.append(item)
             continue
 
@@ -280,20 +401,22 @@ def filter_queries_by_retrievability(
             results = client.search(search_text=query_text, top=top_k)
             returned_ids = [normalize_doc_id(dict(r)) for r in results]
 
-            if expected_id in returned_ids:
+            missing = [eid for eid in expected_ids if eid not in returned_ids]
+
+            if not missing:
                 kept.append(item)
             else:
                 discarded += 1
+                kind = "multi-doc" if item.get("multi_doc") else "single-doc"
                 rank_info = ", ".join(returned_ids[:top_k]) if returned_ids else "(no results)"
                 print(
                     f"  DISCARDED: [{i+1}/{len(eval_items)}] "
-                    f"query did not retrieve source doc in top-{top_k}\n"
+                    f"{kind} query did not retrieve all source docs in top-{top_k}\n"
                     f"    query:    {query_text[:80]}\n"
-                    f"    expected: {expected_id}\n"
+                    f"    missing:  {', '.join(missing)}\n"
                     f"    got:      {rank_info}"
                 )
         except Exception as exc:
-            # On search failure, keep the query rather than silently dropping it
             print(f"  WARNING: [{i+1}/{len(eval_items)}] search failed ({exc}), keeping query")
             kept.append(item)
 
@@ -484,6 +607,11 @@ CLI flags override .env values, so you can point at any search environment:
         help="Azure OpenAI deployment for query generation (overrides AZURE_OPENAI_DEPLOYMENT). "
              "Smarter models produce higher-quality synthetic queries and ground-truth answers.",
     )
+    gen_group.add_argument(
+        "--multi-doc-pairs", type=int, default=5,
+        help="Number of document pairs for multi-doc query generation — questions that require "
+             "information from 2 documents to answer (default: 5, set to 0 to disable)",
+    )
     args = parser.parse_args()
 
     output = Path(args.output)
@@ -503,6 +631,7 @@ CLI flags override .env values, so you can point at any search environment:
     print(f"Queries per doc : {args.queries_per_doc}")
     print(f"Retrieval top-K : {args.retrieval_top_k}")
     print(f"Gen model       : {args.gen_model or '(default from .env)'}")
+    print(f"Multi-doc pairs : {args.multi_doc_pairs}")
     print(f"Output          : {output}")
     print()
 
@@ -522,11 +651,19 @@ CLI flags override .env values, so you can point at any search environment:
         print(f"\nWould generate ~{len(docs) * args.queries_per_doc} queries. Exiting.")
         return
 
-    # Step 2: Generate queries from document content
+    # Step 2: Generate single-doc queries from document content
     eval_items = generate_queries(docs, args.queries_per_doc, deployment=args.gen_model)
     if not eval_items:
         print("ERROR: No queries generated. Check GPT connectivity.")
         sys.exit(1)
+
+    # Step 2b: Generate multi-doc queries (questions requiring 2 sources)
+    if args.multi_doc_pairs > 0:
+        multi_items = generate_multi_doc_queries(
+            docs, num_pairs=args.multi_doc_pairs, deployment=args.gen_model,
+        )
+        eval_items.extend(multi_items)
+        print(f"\nTotal queries: {len(eval_items)} ({len(eval_items) - len(multi_items)} single-doc + {len(multi_items)} multi-doc)")
 
     # Step 3: Retrieval validation — ARES-style filtering
     eval_items = filter_queries_by_retrievability(
