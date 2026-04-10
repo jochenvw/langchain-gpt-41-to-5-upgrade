@@ -86,6 +86,17 @@ def get_search_client(
     return SearchClient(endpoint=endpoint, index_name=index, credential=credential)
 
 
+def normalize_doc_id(doc: dict) -> str:
+    """Extract a document ID using a consistent fallback order.
+
+    Azure AI Search indexes use different ID field names depending on
+    the indexing pipeline.  This helper ensures we compare IDs
+    consistently across sampling, query generation, and retrieval
+    validation.
+    """
+    return str(doc.get("id", doc.get("chunk_id", doc.get("uid", "")))).strip()
+
+
 def sample_documents(client, sample_size: int, content_fields: list[str]) -> list[dict]:
     """Pull a sample of documents from the search index.
 
@@ -114,7 +125,7 @@ def sample_documents(client, sample_size: int, content_fields: list[str]) -> lis
         if not content or len(content.strip()) < 50:
             continue
         docs.append({
-            "id": doc.get("id", doc.get("chunk_id", doc.get("uid", ""))),
+            "id": normalize_doc_id(doc),
             "title": (
                 doc.get("title")
                 or doc.get("metadata_storage_name")
@@ -223,39 +234,128 @@ Example output:
 
 
 # ---------------------------------------------------------------------------
+# Retrieval validation — ARES-style filtering
+# ---------------------------------------------------------------------------
+
+def filter_queries_by_retrievability(
+    client,
+    eval_items: list[dict],
+    top_k: int = 5,
+) -> list[dict]:
+    """Filter out synthetic queries whose source document is not retrievable.
+
+    For each generated query, runs a search against the same index and checks
+    whether the original source document appears in the top-K results.  Queries
+    that fail this check are discarded — they represent weak or ambiguous
+    questions that would produce misleading eval scores.
+
+    This mirrors the ARES approach: after generating a synthetic query, verify
+    that the original source passage is retrievable; otherwise reject it.
+    """
+    print(f"\nRetrieval validation (top-{top_k})...")
+
+    kept: list[dict] = []
+    discarded = 0
+
+    for i, item in enumerate(eval_items):
+        query_text = item["query"]
+        expected_id = item.get("source_doc_id", "").strip()
+
+        if not expected_id:
+            # No source doc ID — can't validate, keep by default
+            kept.append(item)
+            continue
+
+        try:
+            results = client.search(search_text=query_text, top=top_k)
+            returned_ids = [normalize_doc_id(dict(r)) for r in results]
+
+            if expected_id in returned_ids:
+                kept.append(item)
+            else:
+                discarded += 1
+                rank_info = ", ".join(returned_ids[:top_k]) if returned_ids else "(no results)"
+                print(
+                    f"  DISCARDED: [{i+1}/{len(eval_items)}] "
+                    f"query did not retrieve source doc in top-{top_k}\n"
+                    f"    query:    {query_text[:80]}\n"
+                    f"    expected: {expected_id}\n"
+                    f"    got:      {rank_info}"
+                )
+        except Exception as exc:
+            # On search failure, keep the query rather than silently dropping it
+            print(f"  WARNING: [{i+1}/{len(eval_items)}] search failed ({exc}), keeping query")
+            kept.append(item)
+
+        time.sleep(0.1)
+
+    total = len(eval_items)
+    pct = (len(kept) / total * 100) if total else 0
+    print(f"\nRetrieval validation: kept {len(kept)} / {total} queries ({pct:.1f}%)")
+    return kept
+
+
+# ---------------------------------------------------------------------------
 # BYOD pipeline — get responses and context for each query
 # ---------------------------------------------------------------------------
 
 def run_byod_pipeline(eval_items: list[dict]) -> list[dict]:
-    """Run each query through the BYOD pipeline to capture response + context."""
-    from app import build_llm, get_byod_extra_body
-    from langchain_core.messages import HumanMessage, SystemMessage
+    """Run each query through the BYOD pipeline to capture response + context.
 
-    print(f"\nRunning {len(eval_items)} queries through BYOD pipeline...")
+    Uses the raw OpenAI SDK (not LangChain) because LangChain's AzureChatOpenAI
+    strips the On Your Data citation context from the response. The raw SDK
+    exposes it via message.model_extra.context.citations.
+    """
+    from openai import AzureOpenAI
+    from app import get_byod_extra_body
+    from config import settings
 
-    llm = build_llm()
+    print(f"\nRunning {len(eval_items)} queries through BYOD pipeline (raw SDK)...")
+
+    client_kwargs = dict(
+        azure_endpoint=settings.azure_endpoint_base,
+        api_version=settings.api_version,
+    )
+    if settings.auth_type == "entra":
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        credential = DefaultAzureCredential()
+        client_kwargs["azure_ad_token_provider"] = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+    else:
+        client_kwargs["api_key"] = settings.api_key
+        client_kwargs["default_headers"] = {"api-key": settings.api_key}
+
+    client = AzureOpenAI(**client_kwargs)
     extra_body = get_byod_extra_body()
-    system = SystemMessage(content="You are a helpful assistant.")
 
     for i, item in enumerate(eval_items):
         try:
-            messages = [system, HumanMessage(content=item["query"])]
-            result = llm.invoke(messages, extra_body=extra_body)
+            resp = client.chat.completions.create(
+                model=settings.deployment,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": item["query"]},
+                ],
+                extra_body=extra_body,
+                temperature=0.7,
+            )
 
-            item["response"] = result.content
+            msg = resp.choices[0].message
+            item["response"] = msg.content or ""
 
-            # Extract context from citations
+            # Extract citations from model_extra (On Your Data context)
             context = ""
-            if hasattr(result, "response_metadata") and result.response_metadata:
-                meta = result.response_metadata
-                ctx_block = meta.get("context", {})
-                citations = ctx_block.get("citations") or ctx_block.get("documents") or []
+            model_extra = msg.model_extra or {}
+            ctx_block = model_extra.get("context", {})
+            citations = ctx_block.get("citations") or ctx_block.get("documents") or []
+            if citations:
                 context = "\n\n".join(
                     c.get("content", "") for c in citations if c.get("content")
                 )
             item["context"] = context
 
-            status = f"{len(item['response'])} chars"
+            status = f"{len(item['response'])} resp / {len(context)} ctx"
             print(f"  [{i+1}/{len(eval_items)}] {item['query'][:55]:<55} → {status}")
 
         except Exception as exc:
@@ -365,6 +465,10 @@ CLI flags override .env values, so you can point at any search environment:
         "--dry-run", action="store_true",
         help="Sample docs and show what would be generated, but don't call GPT",
     )
+    gen_group.add_argument(
+        "--retrieval-top-k", type=int, default=5,
+        help="Top-K search results used to validate synthetic query retrievability (default: 5)",
+    )
     args = parser.parse_args()
 
     output = Path(args.output)
@@ -382,6 +486,7 @@ CLI flags override .env values, so you can point at any search environment:
     print(f"Content fields  : {', '.join(content_fields)}")
     print(f"Sample size     : {args.sample_size} documents")
     print(f"Queries per doc : {args.queries_per_doc}")
+    print(f"Retrieval top-K : {args.retrieval_top_k}")
     print(f"Output          : {output}")
     print()
 
@@ -407,11 +512,20 @@ CLI flags override .env values, so you can point at any search environment:
         print("ERROR: No queries generated. Check GPT connectivity.")
         sys.exit(1)
 
-    # Step 3: Run through BYOD pipeline (optional)
+    # Step 3: Retrieval validation — ARES-style filtering
+    eval_items = filter_queries_by_retrievability(
+        search_client, eval_items, top_k=args.retrieval_top_k,
+    )
+    if not eval_items:
+        print("ERROR: All queries were discarded by retrieval validation.")
+        print("       Try increasing --retrieval-top-k or reviewing query quality.")
+        sys.exit(1)
+
+    # Step 4: Run through BYOD pipeline (optional)
     if not args.skip_byod:
         eval_items = run_byod_pipeline(eval_items)
 
-    # Step 4: Write output
+    # Step 5: Write output
     write_jsonl(eval_items, output)
 
     print(f"\n{'=' * 60}")
