@@ -156,12 +156,17 @@ def sample_documents(client, sample_size: int, content_fields: list[str]) -> lis
 # Query generation — use GPT to create realistic eval questions
 # ---------------------------------------------------------------------------
 
-def generate_queries(docs: list[dict], queries_per_doc: int) -> list[dict]:
-    """Use GPT to synthesise evaluation queries from document content."""
+def generate_queries(docs: list[dict], queries_per_doc: int, deployment: str | None = None) -> list[dict]:
+    """Use GPT to synthesise evaluation queries from document content.
+
+    Args:
+        deployment: If set, use this model deployment instead of .env default.
+    """
     from openai import AzureOpenAI
     from config import settings
 
-    print(f"\nGenerating {queries_per_doc} query(s) per document using {settings.deployment}...")
+    model = deployment or settings.deployment
+    print(f"\nGenerating {queries_per_doc} query(s) per document using {model}...")
 
     client_kwargs = dict(
         azure_endpoint=settings.azure_endpoint_base,
@@ -178,6 +183,11 @@ def generate_queries(docs: list[dict], queries_per_doc: int) -> list[dict]:
         client_kwargs["default_headers"] = {"api-key": settings.api_key}
 
     client = AzureOpenAI(**client_kwargs)
+
+    # GPT-5 family rejects non-default temperature; only set it for older models
+    create_kwargs: dict = {}
+    if not model.startswith("gpt-5"):
+        create_kwargs["temperature"] = 0.7
 
     system_prompt = f"""You are an evaluation dataset generator. Given a document excerpt,
 generate exactly {queries_per_doc} realistic question(s) that a user would ask and that
@@ -197,12 +207,12 @@ Example output:
 
         try:
             response = client.chat.completions.create(
-                model=settings.deployment,
+                model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Document{title_hint}:\n\n{excerpt}"},
                 ],
-                temperature=0.7,
+                **create_kwargs,
             )
             raw = response.choices[0].message.content.strip()
             # Strip markdown fencing if present
@@ -469,6 +479,11 @@ CLI flags override .env values, so you can point at any search environment:
         "--retrieval-top-k", type=int, default=5,
         help="Top-K search results used to validate synthetic query retrievability (default: 5)",
     )
+    gen_group.add_argument(
+        "--gen-model", type=str, default=None,
+        help="Azure OpenAI deployment for query generation (overrides AZURE_OPENAI_DEPLOYMENT). "
+             "Smarter models produce higher-quality synthetic queries and ground-truth answers.",
+    )
     args = parser.parse_args()
 
     output = Path(args.output)
@@ -487,6 +502,7 @@ CLI flags override .env values, so you can point at any search environment:
     print(f"Sample size     : {args.sample_size} documents")
     print(f"Queries per doc : {args.queries_per_doc}")
     print(f"Retrieval top-K : {args.retrieval_top_k}")
+    print(f"Gen model       : {args.gen_model or '(default from .env)'}")
     print(f"Output          : {output}")
     print()
 
@@ -507,7 +523,7 @@ CLI flags override .env values, so you can point at any search environment:
         return
 
     # Step 2: Generate queries from document content
-    eval_items = generate_queries(docs, args.queries_per_doc)
+    eval_items = generate_queries(docs, args.queries_per_doc, deployment=args.gen_model)
     if not eval_items:
         print("ERROR: No queries generated. Check GPT connectivity.")
         sys.exit(1)
