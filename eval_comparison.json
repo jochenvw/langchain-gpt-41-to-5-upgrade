@@ -9,6 +9,16 @@
     "total_tokens": 69472,
     "avg_tokens": 3474
   },
+  "gpt-5-mini": {
+    "groundedness": 5.0,
+    "relevance": 4.9,
+    "coherence": 4.45,
+    "fluency": 4.1,
+    "retrieval": 4.9,
+    "avg_latency_ms": 33125,
+    "total_tokens": 83266,
+    "avg_tokens": 4163
+  },
   "gpt-5.4-mini": {
     "groundedness": 5.0,
     "relevance": 4.75,
