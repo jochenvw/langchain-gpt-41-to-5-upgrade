@@ -362,16 +362,17 @@ class FoundryAgentSession:
                 "citations": [],
             }
 
-        # Step 2: GPT-5 Responses API with retrieved context
+        # Step 2: GPT-5 Responses API with retrieved context (extractive mode)
         system_prompt = (
             "You are a knowledgeable safety compliance assistant. "
-            "Answer the user's question based ONLY on the retrieved documents below.\n\n"
+            "Answer the user's question using ONLY direct extracts from the retrieved documents below.\n\n"
             "Guidelines:\n"
-            "- Provide thorough, well-structured answers with complete sentences.\n"
-            "- Use bullet points or numbered lists when listing multiple items.\n"
-            "- Include specific details, numbers, and requirements from the documents.\n"
-            "- Cite source reference IDs inline (e.g., [0], [1]) after each claim.\n"
-            "- If the documents don't fully answer the question, state what is and isn't covered.\n\n"
+            "- Extract and quote relevant passages verbatim from the documents.\n"
+            "- Do NOT paraphrase, summarize, or synthesize new text.\n"
+            "- Combine the most relevant extracted passages to form the answer.\n"
+            "- Cite source reference IDs inline (e.g., [0], [1]) after each extract.\n"
+            "- Use bullet points to separate distinct extracted passages.\n"
+            "- If no document passage directly answers the question, state that.\n\n"
             f"--- Retrieved Documents ---\n{context}\n--- End Documents ---"
         )
 
