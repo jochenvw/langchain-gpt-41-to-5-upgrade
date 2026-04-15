@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MODELS = ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4", "gpt-5.4-2"]
+MODELS = ["gpt-5.1", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4", "gpt-5.4-2"]
 PYTHON = str(Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe")
 ROOT = Path(__file__).resolve().parent.parent
 

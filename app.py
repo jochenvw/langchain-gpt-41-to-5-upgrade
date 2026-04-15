@@ -262,7 +262,7 @@ class FoundryAgentSession:
         """Call the Foundry IQ knowledge base retrieve API.
 
         Uses ``low`` reasoning effort for faster retrieval while still
-        enabling model-based query planning. Limits to top-5 documents.
+        enabling model-based query planning. Limits context to 15K chars.
         """
         # Refresh token if expired
         import time as _time
@@ -316,8 +316,10 @@ class FoundryAgentSession:
         # Step 1: Foundry IQ agentic retrieval
         kb_result = self._retrieve(user_query)
 
-        # Extract context chunks — keep top 5 for speed
+        # Extract context chunks — keep up to 15K chars for speed
+        MAX_CONTEXT_CHARS = 15_000
         context_parts = []
+        total_chars = 0
         for msg in kb_result.get("response", []):
             for block in msg.get("content", []):
                 raw = block.get("text", "")
@@ -328,11 +330,17 @@ class FoundryAgentSession:
                             ref_id = chunk.get("ref_id", "")
                             text = chunk.get("content", "")
                             if text:
-                                context_parts.append(f"[{ref_id}] {text}")
+                                part = f"[{ref_id}] {text}"
+                                if total_chars + len(part) > MAX_CONTEXT_CHARS:
+                                    break
+                                context_parts.append(part)
+                                total_chars += len(part)
                 except (_json.JSONDecodeError, TypeError):
                     if raw:
+                        if total_chars + len(raw) > MAX_CONTEXT_CHARS:
+                            continue
                         context_parts.append(raw)
-        context_parts = context_parts[:5]
+                        total_chars += len(raw)
 
         # Extract references for citations
         citations = []
