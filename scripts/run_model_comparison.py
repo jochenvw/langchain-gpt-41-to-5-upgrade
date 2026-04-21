@@ -158,8 +158,11 @@ def print_comparison(all_results: dict):
         ret_lats = [r.get("outputs.retrieve_latency_ms") for r in rows]
         gen_lats = [r.get("outputs.generate_latency_ms") for r in rows]
 
-        # Detect architecture from presence of per-stage timings
+        # Detect architecture: two-call if per-stage timings present, or if
+        # the label indicates a Foundry run (historical data lacks stage fields)
         has_stages = any(v is not None for v in ret_lats)
+        is_byod_baseline = m == "GPT-4.1 BYOD"
+        is_two_call = has_stages or (not is_byod_baseline and m != "GPT-4.1 BYOD")
 
         # Get model names from first row with data
         gen_model = None
@@ -169,7 +172,7 @@ def print_comparison(all_results: dict):
             ret_backend = ret_backend or r.get("outputs.retrieve_backend")
 
         entry = {
-            "architecture": "two-call" if has_stages else "single-call",
+            "architecture": "two-call" if is_two_call else "single-call",
             "quality": {
                 "groundedness": metrics.get("groundedness.groundedness"),
                 "relevance": metrics.get("relevance.relevance"),
@@ -183,11 +186,11 @@ def print_comparison(all_results: dict):
             "tokens": {
                 "total": sum(gen_tokens),
                 "avg": round(sum(gen_tokens) / max(len(gen_tokens), 1)),
-                "scope": "generation-only" if has_stages else "full-pipeline",
+                "scope": "generation-only" if is_two_call else "full-pipeline",
             },
         }
 
-        if has_stages:
+        if is_two_call:
             entry["retrieve"] = {
                 "backend": ret_backend or "foundry-kb-retrieve",
                 "avg_latency_ms": _safe_avg(ret_lats),
