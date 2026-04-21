@@ -40,8 +40,9 @@ def run_eval(model: str) -> dict | None:
 
 
 def _safe_avg(values):
-    """Average of non-None values, or None if empty."""
-    clean = [v for v in values if v is not None]
+    """Average of non-None, non-NaN values, or None if empty."""
+    import math
+    clean = [v for v in values if v is not None and not (isinstance(v, float) and math.isnan(v))]
     return round(sum(clean) / len(clean)) if clean else None
 
 
@@ -108,13 +109,15 @@ def print_comparison(all_results: dict):
         return f"{max(vals, default=0):,.0f}ms"
 
     def _ret_avg(rows):
+        import math
         vals = [r.get("outputs.retrieve_latency_ms") for r in rows]
-        vals = [v for v in vals if v is not None]
+        vals = [v for v in vals if v is not None and not (isinstance(v, float) and math.isnan(v))]
         return f"{sum(vals) / len(vals):,.0f}ms" if vals else "n/a"
 
     def _gen_avg(rows):
+        import math
         vals = [r.get("outputs.generate_latency_ms") for r in rows]
-        vals = [v for v in vals if v is not None]
+        vals = [v for v in vals if v is not None and not (isinstance(v, float) and math.isnan(v))]
         return f"{sum(vals) / len(vals):,.0f}ms" if vals else "n/a"
 
     def _total_tokens(rows):

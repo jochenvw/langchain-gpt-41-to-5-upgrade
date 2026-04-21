@@ -261,8 +261,9 @@ class FoundryAgentSession:
     def _retrieve(self, user_query: str) -> dict:
         """Call the Foundry IQ knowledge base retrieve API.
 
-        Uses ``low`` reasoning effort for faster retrieval while still
-        enabling model-based query planning. Limits context to 15K chars.
+        Uses ``minimal`` reasoning effort with direct semantic intents,
+        bypassing model-based query planning (avoids needing API-key auth
+        on the backing AOAI resource).
 
         Returns the KB JSON response with an added ``retrieve_latency_ms``
         field measuring the API call time.
@@ -277,13 +278,8 @@ class FoundryAgentSession:
             f"/retrieve?api-version=2025-11-01-preview"
         )
         body = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_query}],
-                }
-            ],
-            "retrievalReasoningEffort": {"kind": "low"},
+            "intents": [{"type": "semantic", "search": user_query}],
+            "retrievalReasoningEffort": {"kind": "minimal"},
             "includeActivity": False,
             "knowledgeSourceParams": [
                 {

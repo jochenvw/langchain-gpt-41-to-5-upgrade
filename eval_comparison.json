@@ -3,157 +3,157 @@
   "gpt-5.1": {
     "architecture": "two-call",
     "quality": {
-      "groundedness": 4.7,
-      "relevance": 4.45,
-      "coherence": 3.85,
-      "fluency": 3.75,
-      "retrieval": 4.95
+      "groundedness": 4.75,
+      "relevance": 4.4,
+      "coherence": 3.75,
+      "fluency": 3.6,
+      "retrieval": 5.0
     },
     "latency": {
-      "e2e_avg_ms": 10556
+      "e2e_avg_ms": 7333
     },
     "tokens": {
-      "total": 68222,
-      "avg": 3411,
+      "total": 65720,
+      "avg": 3286,
       "scope": "generation-only"
     },
     "retrieve": {
       "backend": "foundry-kb-retrieve",
-      "avg_latency_ms": null
+      "avg_latency_ms": 1868
     },
     "generate": {
-      "model": "unknown",
-      "avg_latency_ms": null
+      "model": "gpt-5.1",
+      "avg_latency_ms": 5465
     }
   },
   "gpt-5-mini": {
     "architecture": "two-call",
     "quality": {
       "groundedness": 4.75,
-      "relevance": 4.45,
-      "coherence": 3.65,
+      "relevance": 4.55,
+      "coherence": 3.75,
       "fluency": 3.6,
-      "retrieval": 4.9
+      "retrieval": 5.0
     },
     "latency": {
-      "e2e_avg_ms": 31421
+      "e2e_avg_ms": 36469
     },
     "tokens": {
-      "total": 86289,
-      "avg": 4314,
+      "total": 84270,
+      "avg": 4214,
       "scope": "generation-only"
     },
     "retrieve": {
       "backend": "foundry-kb-retrieve",
-      "avg_latency_ms": null
+      "avg_latency_ms": 727
     },
     "generate": {
-      "model": "unknown",
-      "avg_latency_ms": null
+      "model": "gpt-5-mini",
+      "avg_latency_ms": 35742
     }
   },
   "gpt-5.4-mini": {
     "architecture": "two-call",
     "quality": {
-      "groundedness": 4.7,
-      "relevance": 4.25,
-      "coherence": 3.6,
-      "fluency": 3.45,
-      "retrieval": 4.9
+      "groundedness": 4.65,
+      "relevance": 4.35,
+      "coherence": 3.85,
+      "fluency": 3.5,
+      "retrieval": 5.0
     },
     "latency": {
-      "e2e_avg_ms": 9724
+      "e2e_avg_ms": 5833
     },
     "tokens": {
-      "total": 66647,
-      "avg": 3332,
+      "total": 64915,
+      "avg": 3246,
       "scope": "generation-only"
     },
     "retrieve": {
       "backend": "foundry-kb-retrieve",
-      "avg_latency_ms": null
+      "avg_latency_ms": 728
     },
     "generate": {
-      "model": "unknown",
-      "avg_latency_ms": null
+      "model": "gpt-5.4-mini",
+      "avg_latency_ms": 5105
     }
   },
   "gpt-5.4-nano": {
     "architecture": "two-call",
     "quality": {
-      "groundedness": 4.6,
-      "relevance": 4.3,
-      "coherence": 3.7,
-      "fluency": 3.4,
-      "retrieval": 4.95
+      "groundedness": 4.85,
+      "relevance": 4.1,
+      "coherence": 3.85,
+      "fluency": 3.45,
+      "retrieval": 5.0
     },
     "latency": {
-      "e2e_avg_ms": 15819
+      "e2e_avg_ms": 6204
     },
     "tokens": {
-      "total": 66776,
-      "avg": 3339,
+      "total": 64641,
+      "avg": 3232,
       "scope": "generation-only"
     },
     "retrieve": {
       "backend": "foundry-kb-retrieve",
-      "avg_latency_ms": null
+      "avg_latency_ms": 686
     },
     "generate": {
-      "model": "unknown",
-      "avg_latency_ms": null
+      "model": "gpt-5.4-nano",
+      "avg_latency_ms": 5517
     }
   },
   "gpt-5.4": {
     "architecture": "two-call",
     "quality": {
-      "groundedness": 4.615384615384615,
-      "relevance": 4.230769230769231,
-      "coherence": 3.8461538461538463,
-      "fluency": 3.4615384615384617,
+      "groundedness": 4.846153846153846,
+      "relevance": 4.615384615384615,
+      "coherence": 3.6923076923076925,
+      "fluency": 3.8461538461538463,
       "retrieval": 5.0
     },
     "latency": {
-      "e2e_avg_ms": 14340
+      "e2e_avg_ms": 12246
     },
     "tokens": {
-      "total": 42522,
-      "avg": 2126,
+      "total": 42800,
+      "avg": 2140,
       "scope": "generation-only"
     },
     "retrieve": {
       "backend": "foundry-kb-retrieve",
-      "avg_latency_ms": null
+      "avg_latency_ms": 734
     },
     "generate": {
-      "model": "unknown",
-      "avg_latency_ms": null
+      "model": "gpt-5.4",
+      "avg_latency_ms": 12081
     }
   },
   "gpt-5.4-2": {
     "architecture": "two-call",
     "quality": {
-      "groundedness": 4.7,
-      "relevance": 4.421052631578948,
-      "coherence": 3.8,
-      "fluency": 3.4,
-      "retrieval": 4.95
+      "groundedness": 4.85,
+      "relevance": 4.55,
+      "coherence": 3.75,
+      "fluency": 3.65,
+      "retrieval": 5.0
     },
     "latency": {
-      "e2e_avg_ms": 10024
+      "e2e_avg_ms": 6452
     },
     "tokens": {
-      "total": 66277,
-      "avg": 3314,
+      "total": 65338,
+      "avg": 3267,
       "scope": "generation-only"
     },
     "retrieve": {
       "backend": "foundry-kb-retrieve",
-      "avg_latency_ms": null
+      "avg_latency_ms": 741
     },
     "generate": {
-      "model": "unknown",
-      "avg_latency_ms": null
+      "model": "gpt-5.4-2",
+      "avg_latency_ms": 5711
     }
   },
   "GPT-4.1 BYOD": {
