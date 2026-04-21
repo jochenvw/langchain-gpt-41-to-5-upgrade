@@ -39,6 +39,12 @@ def run_eval(model: str) -> dict | None:
     return None
 
 
+def _safe_avg(values):
+    """Average of non-None values, or None if empty."""
+    clean = [v for v in values if v is not None]
+    return round(sum(clean) / len(clean)) if clean else None
+
+
 def print_comparison(all_results: dict):
     """Print a formatted comparison table."""
     # Load baselines
@@ -89,12 +95,44 @@ def print_comparison(all_results: dict):
     print(f"  {'-' * (14 + (col_width + 1) * len(models))}")
 
     # Latency and token stats from rows
+    def _e2e_avg(rows):
+        vals = [r.get("outputs.latency_ms", 0) for r in rows]
+        return f"{sum(vals) / max(len(vals), 1):,.0f}ms"
+
+    def _e2e_min(rows):
+        vals = [r.get("outputs.latency_ms", 0) for r in rows]
+        return f"{min(vals, default=0):,.0f}ms"
+
+    def _e2e_max(rows):
+        vals = [r.get("outputs.latency_ms", 0) for r in rows]
+        return f"{max(vals, default=0):,.0f}ms"
+
+    def _ret_avg(rows):
+        vals = [r.get("outputs.retrieve_latency_ms") for r in rows]
+        vals = [v for v in vals if v is not None]
+        return f"{sum(vals) / len(vals):,.0f}ms" if vals else "n/a"
+
+    def _gen_avg(rows):
+        vals = [r.get("outputs.generate_latency_ms") for r in rows]
+        vals = [v for v in vals if v is not None]
+        return f"{sum(vals) / len(vals):,.0f}ms" if vals else "n/a"
+
+    def _total_tokens(rows):
+        vals = [r.get("outputs.generate_total_tokens") or r.get("outputs.total_tokens", 0) for r in rows]
+        return f"{sum(vals):,}"
+
+    def _avg_tokens(rows):
+        vals = [r.get("outputs.generate_total_tokens") or r.get("outputs.total_tokens", 0) for r in rows]
+        return f"{sum(vals) / max(len(vals), 1):,.0f}"
+
     for stat_label, compute_fn in [
-        ("Avg Latency", lambda rows: f"{sum(r.get('outputs.latency_ms', 0) for r in rows) / max(len(rows), 1):,.0f}ms"),
-        ("Min Latency", lambda rows: f"{min((r.get('outputs.latency_ms', 0) for r in rows), default=0):,.0f}ms"),
-        ("Max Latency", lambda rows: f"{max((r.get('outputs.latency_ms', 0) for r in rows), default=0):,.0f}ms"),
-        ("Total Tokens", lambda rows: f"{sum(r.get('outputs.total_tokens', 0) for r in rows):,}"),
-        ("Avg Tokens", lambda rows: f"{sum(r.get('outputs.total_tokens', 0) for r in rows) / max(len(rows), 1):,.0f}"),
+        ("E2E Latency", _e2e_avg),
+        ("Min E2E", _e2e_min),
+        ("Max E2E", _e2e_max),
+        ("Avg Retrieve", _ret_avg),
+        ("Avg Generate", _gen_avg),
+        ("Total Tokens", _total_tokens),
+        ("Avg Tokens", _avg_tokens),
     ]:
         row = f"  {stat_label:<14}"
         for m in models:
@@ -109,24 +147,59 @@ def print_comparison(all_results: dict):
 
     print()
 
-    # Save comparison as JSON
-    summary = {}
+    # Save comparison as structured JSON (schema v2)
+    summary = {"schema_version": 2}
     for m in models:
         data = all_results[m]
         metrics = data.get("metrics", data)
         rows = data.get("rows", [])
         latencies = [r.get("outputs.latency_ms", 0) for r in rows]
-        tokens = [r.get("outputs.total_tokens", 0) for r in rows]
-        summary[m] = {
-            "groundedness": metrics.get("groundedness.groundedness"),
-            "relevance": metrics.get("relevance.relevance"),
-            "coherence": metrics.get("coherence.coherence"),
-            "fluency": metrics.get("fluency.fluency"),
-            "retrieval": metrics.get("retrieval.retrieval"),
-            "avg_latency_ms": round(sum(latencies) / max(len(latencies), 1)),
-            "total_tokens": sum(tokens),
-            "avg_tokens": round(sum(tokens) / max(len(tokens), 1)),
+        gen_tokens = [r.get("outputs.generate_total_tokens") or r.get("outputs.total_tokens", 0) for r in rows]
+        ret_lats = [r.get("outputs.retrieve_latency_ms") for r in rows]
+        gen_lats = [r.get("outputs.generate_latency_ms") for r in rows]
+
+        # Detect architecture from presence of per-stage timings
+        has_stages = any(v is not None for v in ret_lats)
+
+        # Get model names from first row with data
+        gen_model = None
+        ret_backend = None
+        for r in rows:
+            gen_model = gen_model or r.get("outputs.generate_model")
+            ret_backend = ret_backend or r.get("outputs.retrieve_backend")
+
+        entry = {
+            "architecture": "two-call" if has_stages else "single-call",
+            "quality": {
+                "groundedness": metrics.get("groundedness.groundedness"),
+                "relevance": metrics.get("relevance.relevance"),
+                "coherence": metrics.get("coherence.coherence"),
+                "fluency": metrics.get("fluency.fluency"),
+                "retrieval": metrics.get("retrieval.retrieval"),
+            },
+            "latency": {
+                "e2e_avg_ms": round(sum(latencies) / max(len(latencies), 1)),
+            },
+            "tokens": {
+                "total": sum(gen_tokens),
+                "avg": round(sum(gen_tokens) / max(len(gen_tokens), 1)),
+                "scope": "generation-only" if has_stages else "full-pipeline",
+            },
         }
+
+        if has_stages:
+            entry["retrieve"] = {
+                "backend": ret_backend or "foundry-kb-retrieve",
+                "avg_latency_ms": _safe_avg(ret_lats),
+            }
+            entry["generate"] = {
+                "model": gen_model or "unknown",
+                "avg_latency_ms": _safe_avg(gen_lats),
+            }
+        else:
+            entry["model"] = gen_model or m
+
+        summary[m] = entry
 
     comparison_path = ROOT / "eval_comparison.json"
     with open(comparison_path, "w", encoding="utf-8") as f:

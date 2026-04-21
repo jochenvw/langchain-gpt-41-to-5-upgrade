@@ -104,9 +104,14 @@ def build_foundry_target(model_override: str | None = None):
             "response": result.get("response", ""),
             "context": result.get("context", ""),
             "latency_ms": round(latency_ms, 1),
-            "prompt_tokens": result.get("prompt_tokens", 0),
-            "completion_tokens": result.get("completion_tokens", 0),
-            "total_tokens": result.get("total_tokens", 0),
+            "retrieve_latency_ms": result.get("retrieve_latency_ms"),
+            "generate_latency_ms": result.get("generate_latency_ms"),
+            "generate_attempts": result.get("generate_attempts"),
+            "generate_model": result.get("generate_model", ""),
+            "retrieve_backend": result.get("retrieve_backend", ""),
+            "generate_prompt_tokens": result.get("generate_prompt_tokens", 0),
+            "generate_completion_tokens": result.get("generate_completion_tokens", 0),
+            "generate_total_tokens": result.get("generate_total_tokens", 0),
         }
 
     # Attach cleanup so the caller can clean up the agent
@@ -186,30 +191,52 @@ def main(use_foundry: bool = False, model: str | None = None):
     if rows:
         # Latency & token summary
         latencies = [r.get("outputs.latency_ms", 0) for r in rows if r.get("outputs.latency_ms")]
-        total_toks = [r.get("outputs.total_tokens", 0) for r in rows if r.get("outputs.total_tokens")]
+        gen_toks = [r.get("outputs.generate_total_tokens") or r.get("outputs.total_tokens", 0) for r in rows]
+        gen_toks = [t for t in gen_toks if t]
         if latencies:
             print(f"\n--- Latency & Token Usage ({len(rows)} queries) ---")
-            print(f"  Avg latency   : {sum(latencies)/len(latencies):.0f} ms")
-            print(f"  Min latency   : {min(latencies):.0f} ms")
-            print(f"  Max latency   : {max(latencies):.0f} ms")
-        if total_toks:
-            print(f"  Avg tokens    : {sum(total_toks)/len(total_toks):.0f}")
-            print(f"  Total tokens  : {sum(total_toks)}")
+            print(f"  Avg e2e latency : {sum(latencies)/len(latencies):.0f} ms")
+            print(f"  Min e2e latency : {min(latencies):.0f} ms")
+            print(f"  Max e2e latency : {max(latencies):.0f} ms")
+
+        # Per-stage latency breakdown (Foundry only)
+        if use_foundry:
+            ret_lats = [r.get("outputs.retrieve_latency_ms") for r in rows]
+            ret_lats = [v for v in ret_lats if v is not None]
+            gen_lats = [r.get("outputs.generate_latency_ms") for r in rows]
+            gen_lats = [v for v in gen_lats if v is not None]
+            if ret_lats:
+                print(f"  Avg retrieve    : {sum(ret_lats)/len(ret_lats):.0f} ms")
+            if gen_lats:
+                print(f"  Avg generate    : {sum(gen_lats)/len(gen_lats):.0f} ms")
+
+        if gen_toks:
+            print(f"  Avg tokens      : {sum(gen_toks)/len(gen_toks):.0f}")
+            print(f"  Total tokens    : {sum(gen_toks)}")
 
         print(f"\n--- Per-Query Scores ({len(rows)} queries) ---")
-        header = f"  {'#':<4} {'Query':<45} {'Ground':>6} {'Rel':>5} {'Coher':>5} {'Flu':>5} {'Retr':>5} {'ms':>7} {'Tokens':>6}"
+        if use_foundry:
+            header = f"  {'#':<4} {'Query':<40} {'Ground':>6} {'Rel':>5} {'Coher':>5} {'Flu':>5} {'Retr':>5} {'e2e':>7} {'retr':>7} {'gen':>7} {'Tokens':>6}"
+        else:
+            header = f"  {'#':<4} {'Query':<45} {'Ground':>6} {'Rel':>5} {'Coher':>5} {'Flu':>5} {'Retr':>5} {'ms':>7} {'Tokens':>6}"
         print(header)
         print(f"  {'-' * len(header.strip())}")
         for i, row in enumerate(rows):
-            q = row.get("inputs.query", f"Q{i+1}")[:45]
+            q_len = 40 if use_foundry else 45
+            q = row.get("inputs.query", f"Q{i+1}")[:q_len]
             g = row.get("outputs.groundedness.groundedness", "n/a")
             r = row.get("outputs.relevance.relevance", "n/a")
             c = row.get("outputs.coherence.coherence", "n/a")
             f = row.get("outputs.fluency.fluency", "n/a")
             t = row.get("outputs.retrieval.retrieval", "n/a")
             ms = row.get("outputs.latency_ms", "n/a")
-            tok = row.get("outputs.total_tokens", "n/a")
-            print(f"  [{i+1:<2}] {q:<45} {g:>6} {r:>5} {c:>5} {f:>5} {t:>5} {ms:>7} {tok:>6}")
+            tok = row.get("outputs.generate_total_tokens") or row.get("outputs.total_tokens", "n/a")
+            if use_foundry:
+                ret_ms = row.get("outputs.retrieve_latency_ms", "n/a")
+                gen_ms = row.get("outputs.generate_latency_ms", "n/a")
+                print(f"  [{i+1:<2}] {q:<40} {g:>6} {r:>5} {c:>5} {f:>5} {t:>5} {ms:>7} {ret_ms:>7} {gen_ms:>7} {tok:>6}")
+            else:
+                print(f"  [{i+1:<2}] {q:<45} {g:>6} {r:>5} {c:>5} {f:>5} {t:>5} {ms:>7} {tok:>6}")
 
     print(f"\nDetailed results saved to: {output_path}")
 

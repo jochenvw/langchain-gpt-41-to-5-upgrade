@@ -75,6 +75,18 @@ results are saved to `eval_results_*.json` files.
 - **Fluency** — language quality
 - **Retrieval** — did the search index return useful documents?
 
+Supports two architectures:
+
+| Architecture | Flag | Calls | Metrics |
+|---|---|---|---|
+| **Legacy BYOD** (default) | _(none)_ | 1 call (model handles RAG + answer) | End-to-end latency, full-pipeline tokens |
+| **Foundry IQ** | `--use-foundry` | 2 calls (retrieve → generate) | Per-stage latency, generation-only tokens |
+
+The Foundry path captures **per-stage timing** (`retrieve_latency_ms`,
+`generate_latency_ms`) alongside end-to-end latency. Stage timings measure
+API call time only — they won't sum exactly to e2e due to orchestration
+overhead (JSON parsing, context assembly, retry logic).
+
 ## Test data
 
 Edit the JSONL files in `evals/data/` to match your domain:

@@ -263,6 +263,9 @@ class FoundryAgentSession:
 
         Uses ``low`` reasoning effort for faster retrieval while still
         enabling model-based query planning. Limits context to 15K chars.
+
+        Returns the KB JSON response with an added ``retrieve_latency_ms``
+        field measuring the API call time.
         """
         # Refresh token if expired
         import time as _time
@@ -295,6 +298,7 @@ class FoundryAgentSession:
                 }
             ],
         }
+        start = _time.perf_counter()
         r = self._http.post(
             url,
             headers={
@@ -304,17 +308,24 @@ class FoundryAgentSession:
             json=body,
         )
         r.raise_for_status()
-        return r.json()
+        result = r.json()
+        result["retrieve_latency_ms"] = round(
+            (_time.perf_counter() - start) * 1000, 1
+        )
+        return result
 
     def query(self, user_query: str) -> dict:
         """Run a Foundry IQ retrieval → GPT-5 generation pipeline.
 
-        Returns a dict with 'response', 'context', and 'citations'.
+        Returns a dict with 'response', 'context', 'citations', and
+        per-stage latency/token metrics for the two-call architecture.
         """
         import json as _json
+        import time as _time
 
         # Step 1: Foundry IQ agentic retrieval
         kb_result = self._retrieve(user_query)
+        retrieve_latency_ms = kb_result.pop("retrieve_latency_ms", None)
 
         # Extract context chunks — keep up to 15K chars for speed
         MAX_CONTEXT_CHARS = 15_000
@@ -360,6 +371,10 @@ class FoundryAgentSession:
                 "response": "I don't have enough information to answer that question.",
                 "context": "",
                 "citations": [],
+                "retrieve_latency_ms": retrieve_latency_ms,
+                "generate_latency_ms": None,
+                "generate_model": self._model,
+                "retrieve_backend": "foundry-kb-retrieve",
             }
 
         # Step 2: GPT-5 Responses API with retrieved context (extractive mode)
@@ -378,7 +393,10 @@ class FoundryAgentSession:
 
         try:
             # Retry once on content-filter refusals (transient GPT-5 issue)
+            generate_attempts = 0
+            gen_start = _time.perf_counter()
             for attempt in range(2):
+                generate_attempts += 1
                 response = self._openai.responses.create(
                     model=self._model,
                     instructions=system_prompt,
@@ -387,21 +405,33 @@ class FoundryAgentSession:
                 text = response.output_text or ""
                 if text and "cannot assist" not in text.lower():
                     break
+            generate_latency_ms = round(
+                (_time.perf_counter() - gen_start) * 1000, 1
+            )
 
             usage = response.usage
             return {
                 "response": text,
                 "context": context,
                 "citations": citations,
-                "prompt_tokens": usage.input_tokens if usage else 0,
-                "completion_tokens": usage.output_tokens if usage else 0,
-                "total_tokens": usage.total_tokens if usage else 0,
+                "retrieve_latency_ms": retrieve_latency_ms,
+                "generate_latency_ms": generate_latency_ms,
+                "generate_attempts": generate_attempts,
+                "generate_model": self._model,
+                "retrieve_backend": "foundry-kb-retrieve",
+                "generate_prompt_tokens": usage.input_tokens if usage else 0,
+                "generate_completion_tokens": usage.output_tokens if usage else 0,
+                "generate_total_tokens": usage.total_tokens if usage else 0,
             }
         except Exception as exc:
             return {
                 "response": "",
                 "context": context,
                 "citations": citations,
+                "retrieve_latency_ms": retrieve_latency_ms,
+                "generate_latency_ms": None,
+                "generate_model": self._model,
+                "retrieve_backend": "foundry-kb-retrieve",
                 "error": str(exc),
             }
 
