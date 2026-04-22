@@ -19,20 +19,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from shared.config import settings
+from shared.prompts import load as load_prompt
 
-
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a knowledgeable safety compliance assistant. "
-    "Answer the user's question using ONLY direct extracts from the retrieved documents below.\n\n"
-    "Guidelines:\n"
-    "- Extract and quote relevant passages verbatim from the documents.\n"
-    "- Do NOT paraphrase, summarize, or synthesize new text.\n"
-    "- Combine the most relevant extracted passages to form the answer.\n"
-    "- Cite source reference IDs inline (e.g., [0], [1]) after each extract.\n"
-    "- Use bullet points to separate distinct extracted passages.\n"
-    "- If no document passage directly answers the question, state that.\n\n"
-    "--- Retrieved Documents ---\n{context}\n--- End Documents ---"
-)
+# Prompt body lives in prompts/two_step_extractive.md (see ADR-0001).
+DEFAULT_SYSTEM_PROMPT = load_prompt("two_step_extractive")
 
 
 @dataclass

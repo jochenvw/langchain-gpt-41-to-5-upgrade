@@ -29,6 +29,7 @@ from azure.ai.evaluation import (
 )
 
 from eval_config import DATA_DIR, get_foundry_project, get_judge_model_config, get_model_config
+from shared.prompts import load as load_prompt
 
 
 def build_chat_target():
@@ -41,7 +42,7 @@ def build_chat_target():
     from langchain_core.messages import HumanMessage, SystemMessage
 
     llm = build_llm()
-    system = SystemMessage(content="You are a helpful assistant.")
+    system = SystemMessage(content=load_prompt("helpful_assistant"))
 
     def _target(query: str) -> str:
         messages = [system, HumanMessage(content=query)]

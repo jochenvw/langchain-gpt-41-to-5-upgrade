@@ -23,6 +23,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from shared.config import settings
+from shared.prompts import load as load_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +123,7 @@ def run_chat(mode: str) -> None:
         print(f"Search     : {settings.search_endpoint} / {settings.search_index}")
     print("Type 'quit' to exit.\n")
 
-    system = SystemMessage(content="You are a helpful assistant.")
+    system = SystemMessage(content=load_prompt("helpful_assistant"))
 
     while True:
         try:
@@ -204,7 +205,7 @@ def test_direct_openai() -> None:
         completion = client.chat.completions.create(
             model=settings.deployment,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": load_prompt("helpful_assistant")},
                 {"role": "user", "content": "Hello, can you hear me?"},
             ],
             temperature=0.7,

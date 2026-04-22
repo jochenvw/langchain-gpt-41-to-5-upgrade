@@ -42,6 +42,7 @@ from azure.ai.evaluation import (
 )
 
 from eval_config import DATA_DIR, get_foundry_project, get_judge_model_config, get_model_config
+from shared.prompts import load as load_prompt
 
 
 def build_byod_target():
@@ -56,7 +57,7 @@ def build_byod_target():
 
     llm = build_llm()
     extra_body = get_byod_extra_body()
-    system = SystemMessage(content="You are a helpful assistant.")
+    system = SystemMessage(content=load_prompt("helpful_assistant"))
 
     def target_fn(query: str, **kwargs) -> dict:
         messages = [system, HumanMessage(content=query)]
