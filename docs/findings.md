@@ -63,7 +63,12 @@ context. Microsoft must update the On Your Data service to use
 - Remove or conditionally set `temperature` based on model
 - Use `max_completion_tokens` instead of `max_tokens` in any explicit token limits
 
-### BYOD / On Your Data
-- **Blocked**: Waiting on Azure to update the On Your Data pipeline to support `max_completion_tokens` for GPT 5 models.
-- **Workaround**: Continue using GPT 4.1 for BYOD workloads until Azure resolves this.
-- Track: https://aka.ms/aoaioydauthentication for updates
+### BYOD / On Your Data → Two-step (stage 4)
+- **BYOD is deprecated** and does not support GPT 5 (server-side `max_tokens` issue is not being fixed).
+- **Migration**: Replace the single BYOD call with two explicit steps:
+  1. **Retrieve** — Azure AI Search knowledge source + knowledge base (agentic retrieval), called via the KB retrieve API (`POST /knowledgebases/{name}/retrieve?api-version=2025-11-01-preview`)
+  2. **Generate** — `AIProjectClient` Responses API on any GPT-5 family deployment
+- **Setup**: `uv run python 4-two-step-app/setup_foundry_iq.py` to provision the KB + knowledge source.
+- **Run**: `uv run python 4-two-step-app/app.py` for interactive chat.
+- **Evaluate**: `uv run python 5-experiments/run.py --model <name>` (or `sweep.py` across models).
+- **Why two steps**: each step is independently configurable and measurable — see stage 5 sweeps.
