@@ -14,8 +14,12 @@ import sys
 import time
 from pathlib import Path
 
-# Ensure project root is on sys.path so we can import app modules
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Make sibling files (eval_config) and cross-stage code importable.
+_HERE = Path(__file__).resolve().parent
+_ROOT = _HERE.parent
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "1-baseline-app"))
 
 from azure.ai.evaluation import (
     CoherenceEvaluator,
@@ -25,7 +29,7 @@ from azure.ai.evaluation import (
     evaluate,
 )
 
-from evals.eval_config import DATA_DIR, get_foundry_project, get_model_config
+from eval_config import DATA_DIR, get_foundry_project, get_judge_model_config, get_model_config
 
 
 def build_chat_target():
@@ -64,8 +68,9 @@ def build_chat_target():
     return target_fn
 
 
-def main():
-    model_config = get_model_config()
+def main(target_model: str | None = None, judge_model: str | None = None):
+    model_config = get_model_config(deployment_override=target_model)
+    judge_config = get_judge_model_config(deployment_override=judge_model)
     foundry_project = get_foundry_project()
     data_path = str(DATA_DIR / "chat_test_data.jsonl")
 
@@ -73,8 +78,8 @@ def main():
     print("Chat Mode Evaluation — Azure AI Evaluation SDK")
     print("=" * 60)
     print(f"Dataset : {data_path}")
-    print(f"Endpoint: {model_config['azure_endpoint']}")
-    print(f"Deploy  : {model_config['azure_deployment']}")
+    print(f"Target  : {model_config['azure_deployment']} @ {model_config['azure_endpoint']}")
+    print(f"Judge   : {judge_config['azure_deployment']} @ {judge_config['azure_endpoint']}")
     print(f"Foundry : {'enabled — results will appear in portal' if foundry_project else 'disabled (local only)'}")
     print()
 
@@ -82,9 +87,9 @@ def main():
         data=data_path,
         target=build_chat_target(),
         evaluators={
-            "coherence": CoherenceEvaluator(model_config),
-            "fluency": FluencyEvaluator(model_config),
-            "relevance": RelevanceEvaluator(model_config),
+            "coherence": CoherenceEvaluator(judge_config),
+            "fluency": FluencyEvaluator(judge_config),
+            "relevance": RelevanceEvaluator(judge_config),
             "f1": F1ScoreEvaluator(),
         },
         evaluator_config={

@@ -1,0 +1,10 @@
+# Azure AI Search SDK (preview needed for knowledge base / agentic retrieval APIs)
+azure-search-documents>=11.6.0b9
+# Azure identity for DefaultAzureCredential (Entra ID / token auth)
+azure-identity>=1.17.0
+# Environment variable management
+python-dotenv>=1.0.0
+# OpenAI SDK (for knowledge base LLM integration verification)
+openai>=1.60.0
+# HTTP requests for REST API calls (knowledge base management)
+requests>=2.31.0
