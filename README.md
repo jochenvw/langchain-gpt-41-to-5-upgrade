@@ -105,3 +105,4 @@ See [evals/README.md](evals/README.md) for details on evaluators and test data.
 | [UPGRADE_NOTES.md](UPGRADE_NOTES.md) | Investigation findings — what breaks and why |
 | [MIGRATION_PLAYBOOK.md](MIGRATION_PLAYBOOK.md) | Step-by-step migration guide (GPT 4.1 + BYOD → GPT 5 + Foundry IQ) |
 | [evals/README.md](evals/README.md) | Evaluation framework docs |
+| [kb-research/README.md](kb-research/README.md) | How to go from Azure AI Search index to knowledge base (Foundry IQ) |
