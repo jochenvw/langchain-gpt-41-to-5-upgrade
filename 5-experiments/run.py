@@ -73,24 +73,25 @@ def build_two_step_target(
 
     def target_fn(query: str, **_kwargs) -> dict:
         result = session.query(query)
-        # Format expected by Groundedness/Retrieval evaluators
         words = len((result.response or "").split())
+        ret_ms = result.retrieve_latency_ms or 0
+        gen_ms = result.generate_latency_ms or 0
+        total_tokens = (result.generate_prompt_tokens or 0) + (result.generate_completion_tokens or 0)
+        # Field names match what sweep.py / historical EVAL_RESULTS aggregators expect.
         return {
             "response": result.response,
             "context": result.context,
             "ground_truth": "",
-            "response_time_s": round(
-                ((result.retrieve_latency_ms or 0)
-                 + (result.generate_latency_ms or 0)) / 1000, 3
-            ),
-            "retrieve_time_s": round((result.retrieve_latency_ms or 0) / 1000, 3),
-            "generate_time_s": round((result.generate_latency_ms or 0) / 1000, 3)
-                if result.generate_latency_ms else None,
-            "ttft_s": None,  # not measured for the two-step app
+            "latency_ms": round(ret_ms + gen_ms),
+            "retrieve_latency_ms": round(ret_ms) if result.retrieve_latency_ms is not None else None,
+            "generate_latency_ms": round(gen_ms) if result.generate_latency_ms is not None else None,
+            "ttft_s": None,
             "response_words": words,
-            "model": result.generate_model,
-            "prompt_tokens": result.generate_prompt_tokens,
-            "completion_tokens": result.generate_completion_tokens,
+            "generate_model": result.generate_model,
+            "retrieve_backend": "foundry-kb-retrieve",
+            "generate_prompt_tokens": result.generate_prompt_tokens,
+            "generate_completion_tokens": result.generate_completion_tokens,
+            "generate_total_tokens": total_tokens or None,
         }
 
     return target_fn
