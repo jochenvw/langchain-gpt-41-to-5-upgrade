@@ -1,23 +1,27 @@
-"""Run all evaluation suites and produce a combined summary.
+"""Run all baseline evaluation suites and produce a combined summary.
 
 Usage:
-    python -m evals.run_all                  # both suites
-    python -m evals.run_all --suite chat     # chat only
-    python -m evals.run_all --suite byod     # byod only
+    python 3-baseline-eval/run.py                       # both suites
+    python 3-baseline-eval/run.py --suite chat          # chat only
+    python 3-baseline-eval/run.py --suite byod          # byod only
 
     # Override which models to use
-    python -m evals.run_all --target-model gpt-5 --judge-model gpt-4.1
+    python 3-baseline-eval/run.py --target-model gpt-5 --judge-model gpt-4.1
 """
 
 import argparse
 import importlib
 import sys
 import traceback
+from pathlib import Path
+
+# Sibling .py files in this stage folder are importable.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 SUITES = {
-    "chat": "evals.eval_chat",
-    "byod": "evals.eval_byod",
+    "chat": "eval_chat",
+    "byod": "eval_byod",
 }
 
 
