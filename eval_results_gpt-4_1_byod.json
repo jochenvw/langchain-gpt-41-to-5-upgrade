@@ -1,0 +1,122 @@
+{
+  "model": "GPT-4.1 BYOD",
+  "rows": [
+    {
+      "query": "What are the key safety procedures for confined space entry?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "What PPE is required for working at heights?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "Describe the lockout/tagout procedure.",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "What are the emergency evacuation routes?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "What is the maximum permissible noise exposure level?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "How should chemical spills be handled on site?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "What training is required before operating heavy machinery?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "What are the reporting requirements for near-miss incidents?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "Describe the fire prevention measures for storage areas.",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    },
+    {
+      "query": "What are the first aid procedures for electrical burns?",
+      "response": "",
+      "context": "",
+      "retrieve_latency_ms": null,
+      "generate_latency_ms": null,
+      "e2e_latency_ms": null,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0
+    }
+  ],
+  "quality": {
+    "groundedness": null,
+    "relevance": null,
+    "coherence": null,
+    "fluency": null,
+    "retrieval": null
+  }
+}
