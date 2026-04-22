@@ -11,11 +11,18 @@ import json
 import sys
 import traceback
 
+import os
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import AzureChatOpenAI
 from openai import AzureOpenAI
 
-from config import settings
+# Allow running this file directly: add repo root so `from shared.config` resolves.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from shared.config import settings
 
 
 # ---------------------------------------------------------------------------

@@ -3,9 +3,14 @@ name: Run LLM Evaluations
 on:
   pull_request:
     paths:
-      - "app.py"
-      - "config.py"
-      - "evals/**"
+      - "1-baseline-app/**"
+      - "2-eval-data/**"
+      - "3-baseline-eval/**"
+      - "4-two-step-app/**"
+      - "5-experiments/**"
+      - "shared/**"
+      - "pyproject.toml"
+      - "uv.lock"
   workflow_dispatch:
     inputs:
       suite:
@@ -52,12 +57,12 @@ jobs:
       - name: Run evaluations
         run: |
           SUITE="${{ github.event.inputs.suite || 'all' }}"
-          uv run python -m evals.run_all --suite "$SUITE"
+          uv run python 3-baseline-eval/run.py --suite "$SUITE"
 
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: eval-results
-          path: eval_results_*.json
+          path: 3-baseline-eval/results/*.json
           retention-days: 30

@@ -14,9 +14,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env from the project root (one level up from evals/)
+# Load .env from the project root (one level up from this stage folder)
 _project_root = Path(__file__).resolve().parent.parent
 load_dotenv(_project_root / ".env")
+
+# JSONL eval data lives in 2-eval-data/data (sibling stage folder)
+DATA_DIR = _project_root / "2-eval-data" / "data"
 
 
 def _require(name: str) -> str:
@@ -122,5 +125,4 @@ def get_foundry_project() -> dict | None:
     return None
 
 
-# Convenience: data directory path
-DATA_DIR = Path(__file__).resolve().parent / "data"
+

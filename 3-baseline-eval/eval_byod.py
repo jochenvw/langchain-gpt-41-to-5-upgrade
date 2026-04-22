@@ -16,8 +16,8 @@ This establishes a quality baseline so you can measure impact when
 migrating models (e.g. GPT-4.1 → GPT-5) or moving to Foundry Agent Service.
 
 Usage:
-    python -m evals.eval_byod            # from project root
-    python evals/eval_byod.py            # direct
+    python 3-baseline-eval/eval_byod.py            # direct
+    python 3-baseline-eval/run.py --suite byod     # via runner
 """
 
 import json
@@ -25,7 +25,12 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Make sibling files (eval_config) and cross-stage code importable.
+_HERE = Path(__file__).resolve().parent
+_ROOT = _HERE.parent
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "1-baseline-app"))
 
 from azure.ai.evaluation import (
     CoherenceEvaluator,
@@ -36,7 +41,7 @@ from azure.ai.evaluation import (
     evaluate,
 )
 
-from evals.eval_config import DATA_DIR, get_foundry_project, get_judge_model_config, get_model_config
+from eval_config import DATA_DIR, get_foundry_project, get_judge_model_config, get_model_config
 
 
 def build_byod_target():
