@@ -8,8 +8,9 @@ A fact-driven migration path. Numbered folders **are** the workflow.
 3-baseline-eval/     Score baseline app → numbers to match/beat
 4-two-step-app/      NEW: retrieve → generate (drop-in BYOD replacement)
 5-experiments/       Sweep AI Search × model/reasoning/token settings
-shared/              Code shared across stages (config, helpers)
-docs/                Findings, playbook
+shared/              Code shared across stages (config, prompt loader)
+prompts/             All system + answer-generation prompts (see ADR-0001)
+docs/                Findings, playbook, ADRs
 kb-research/         Orthogonal POC: how to build the KB itself
 ```
 
@@ -60,6 +61,8 @@ uv run python 5-experiments/sweep.py                 # full matrix
 - `max_tokens` → must be `max_completion_tokens` for GPT-5
 - BYOD pipeline itself sends `max_tokens` server-side → not fixable client-side
 - See [`docs/findings.md`](docs/findings.md) and [`docs/playbook.md`](docs/playbook.md)
+- Architecture decisions: [`docs/adr/`](docs/adr/) — start with [ADR-0001 (prompts as markdown)](docs/adr/0001-prompts-as-markdown-files.md)
+- Conventions for AI coding assistants: [`AGENTS.md`](AGENTS.md)
 
 ## Environment variables
 

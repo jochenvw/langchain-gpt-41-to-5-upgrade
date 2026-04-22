@@ -43,6 +43,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 
+from shared.prompts import load as load_prompt
+
 load_dotenv(PROJECT_ROOT / ".env")
 
 OUTPUT_PATH = PROJECT_ROOT / "evals" / "data" / "byod_test_data.jsonl"
@@ -189,15 +191,7 @@ def generate_queries(docs: list[dict], queries_per_doc: int, deployment: str | N
     if not model.startswith("gpt-5"):
         create_kwargs["temperature"] = 0.7
 
-    system_prompt = f"""You are an evaluation dataset generator. Given a document excerpt,
-generate exactly {queries_per_doc} realistic question(s) that a user would ask and that
-this document can answer. Also provide a concise ground-truth answer for each question
-based ONLY on the document content.
-
-Return a JSON array of objects with "query" and "ground_truth" keys. No markdown fencing.
-
-Example output:
-[{{"query": "What PPE is required for welding?", "ground_truth": "Welding requires a face shield, heat-resistant gloves, and a leather apron."}}]"""
+    system_prompt = load_prompt("eval_data_single_doc").format(queries_per_doc=queries_per_doc)
 
     eval_items = []
     for i, doc in enumerate(docs):
@@ -288,17 +282,7 @@ def generate_multi_doc_queries(
     if not model.startswith("gpt-5"):
         create_kwargs["temperature"] = 0.7
 
-    system_prompt = """You are an evaluation dataset generator. You are given TWO document excerpts.
-Generate exactly 2 realistic questions that REQUIRE information from BOTH documents to answer fully.
-The question should need facts from Document A AND Document B — a single document alone should not
-be sufficient for a complete answer.
-
-Also provide a concise ground-truth answer for each question, citing relevant facts from both documents.
-
-Return a JSON array of objects with "query" and "ground_truth" keys. No markdown fencing.
-
-Example output:
-[{"query": "How do the PPE requirements differ between confined spaces and hot work areas?", "ground_truth": "Confined spaces require respiratory protection and atmospheric monitoring, while hot work areas require fire-resistant clothing and a dedicated fire watch."}]"""
+    system_prompt = load_prompt("eval_data_multi_doc")
 
     # Build pairs — random sampling, avoid duplicates
     all_pairs = []
@@ -467,7 +451,7 @@ def run_byod_pipeline(eval_items: list[dict]) -> list[dict]:
             resp = client.chat.completions.create(
                 model=settings.deployment,
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "system", "content": load_prompt("helpful_assistant")},
                     {"role": "user", "content": item["query"]},
                 ],
                 extra_body=extra_body,
