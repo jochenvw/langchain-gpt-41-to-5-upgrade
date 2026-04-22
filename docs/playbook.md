@@ -3,6 +3,14 @@
 > **Audience**: An LLM agent (or developer) executing this migration step-by-step.
 > Each step is self-contained with explicit inputs, outputs, and verification criteria.
 
+> **Note (post-reorg)**: Code is now organized into stage folders (`1-baseline-app/`,
+> `2-eval-data/`, `3-baseline-eval/`, `4-two-step-app/`, `5-experiments/`). Some
+> command paths in the older sections below (e.g. `scripts/...`, `evals/...`,
+> `python -m evals.run_all`) reflect the pre-reorg layout. The current layout and
+> commands are documented in the top-level [`README.md`](../README.md) and in the
+> per-stage READMEs. The conceptual steps and SDK issues described here are still
+> accurate.
+
 ## Prerequisites
 
 | Requirement | Version | Why |

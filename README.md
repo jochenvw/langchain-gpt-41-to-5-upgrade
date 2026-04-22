@@ -45,11 +45,13 @@ uv run python 2-eval-data/generate.py
 # 3. Score the baseline app to establish target numbers
 uv run python 3-baseline-eval/run.py
 
-# 4. Run the two-step replacement (retrieve.py + generate.py)
-#    [populated by feat/foundry-iq-migration cherry-pick]
+# 4. Two-step replacement (retrieve → generate, configurable per step)
+uv run python 4-two-step-app/setup_foundry_iq.py    # one-time KB provisioning
+uv run python 4-two-step-app/app.py                  # interactive chat
 
-# 5. Sweep configurations to match/beat baseline
-#    [populated by feat/foundry-iq-migration cherry-pick]
+# 5. Sweep model + retrieval settings to match/beat baseline
+uv run python 5-experiments/run.py --model gpt-5-mini --reasoning-effort low
+uv run python 5-experiments/sweep.py                 # full matrix
 ```
 
 ## Findings (TL;DR)
